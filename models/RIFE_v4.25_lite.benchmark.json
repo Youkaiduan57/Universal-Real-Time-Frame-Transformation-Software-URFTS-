@@ -1,0 +1,29 @@
+{
+  "type": "synthetic shifted texture, not gameplay",
+  "results": {
+    "RIFE_v3.6.onnx": {
+      "median_ms": 22.41,
+      "padded_dimensions": [
+        320,
+        192
+      ],
+      "samples_ms": [
+        21.62,
+        22.41,
+        22.41
+      ]
+    },
+    "RIFE_v4.25_lite.onnx": {
+      "median_ms": 59.32,
+      "padded_dimensions": [
+        384,
+        256
+      ],
+      "samples_ms": [
+        56.91,
+        59.96,
+        59.32
+      ]
+    }
+  }
+}

@@ -1,0 +1,142 @@
+URFTS patched GUI - 28 August 2026
+
+RUN ON THIS COMPUTER
+Double-click Start GUI.cmd. The isolated environment is already prepared.
+Select your game in Capture > Target window, then click Start.
+Baseline: WGC, Shader/Bilinear, Performance, frame generation Off, pacing Off.
+Stop the baseline before changing settings. For RIFE: enable Frame Generation,
+use DirectML device 1, generated amount 1, Performance preset and pacing Auto.
+Keep CPU-frame pipeline for RIFE. Ctrl+Alt+Q stops the game preview. Alt-Tab hides it.
+
+If copying this folder elsewhere, run Setup GUI.cmd first. Do not copy .venv.
+Settings and GUI logs are isolated under userdata/UniversalUpscaler.
+Your original Desktop installation and global Python packages were not modified.
+
+FIXES
+- Render each paced frame at its slot instead of waiting for the whole batch.
+- Respect GUI pacing Off with Auto target FPS; validate Fixed mode target.
+- Remove forced 1/6/30-second RIFE latency budgets; honor explicit limits.
+- Label the presentation-input rate as Processed real FPS, not capture FPS.
+- Remove an invalid repository URL from requirements-gui.txt.
+- Install a clean DirectML runtime in an isolated virtual environment.
+
+VERIFICATION
+103 targeted tests passed: GUI, frame pacing, main shutdown, async pipeline.
+Native Windows GUI opened and its rendering was inspected.
+Synthetic RIFE 160x90, three calls after first-call compilation:
+  DirectML device 0: 57.6, 49.5, 43.1 ms
+  DirectML device 1: 40.9, 30.2, 30.3 ms
+These are synthetic timings, not game FPS. The first model call took seconds.
+Subnautica capture and sustained in-game performance remain unverified.
+A 100 ms latency budget may drop output if inference is too slow; a larger
+budget permits older frames but does not improve processing speed.
+
+PREVIEW REPAIR
+Installed opencv-contrib-python 4.13.0.92 locally in .venv to override inherited headless OpenCV. Verified WIN32UI and actual namedWindow/imshow/waitKey/destroyAllWindows. Setup GUI.cmd now installs this build explicitly.
+
+GAME PREVIEW UPDATE
+Fullscreen WGC preview is topmost, layered, click-through and non-activating.
+It is shown only while the selected game is foreground, and hidden on Alt-Tab.
+If Windows blocks initial focus transfer, select the game yourself.
+Ctrl+Alt+Q stops the preview. GUI Stop remains accessible by Alt-Tab.
+Input stays with the actual game; no synthetic keyboard or mouse forwarding.
+Absolute menu-click coordinates are not rescaled from fullscreen output to the
+smaller source window; relative mouse-look still requires an in-game test.
+
+Downscaled RIFE output now preserves original pixels only in regions unchanged
+between consecutive source frames, excluding a moving-boundary margin.
+This helps static detail/HUD sharpness; moving-region blur is not eliminated.
+Native preview styles, visibility transitions, and retained focus were verified.
+
+OVERLOAD FIX
+Verified native DXGI adapter order: 0 Intel UHD, 1 NVIDIA RTX 4050 Laptop.
+GUI now retains the latest real frame when it exceeds the latency budget,
+rather than freezing because every processed frame is discarded. Generated
+frames still obey the latency budget. This prioritizes continuity over a hard
+real-frame latency limit; it cannot make slow inference reach 60 FPS.
+57 focused regression tests passed. Synthetic RTX Balanced 1920x1080-output
+interpolation after first-call compilation: 30.0, 32.6, 34.2 ms.
+
+CLIENT CROP AND FPS OVERLAY
+FPS overlay enabled in the active saved profile.
+WGC CPU frames now crop to the native client area before scaling; cropping
+is skipped if frame geometry and native bounds disagree during resize.
+Verified against the actual game: 1282x759 capture -> 1280x720 client image.
+67 related regression tests passed.
+RTX benchmark using two captured game frames, resized to 1920x1080:
+Performance median 57.01 ms, Balanced 62.44 ms, Quality 102.56 ms.
+Four measured calls per preset after two warmup calls. Model-only benchmark;
+not a sustained gameplay FPS measurement. Game/GPU load affects these times.
+Keep current one-generated-frame setup; higher frame counts multiply inference
+work. Quality reduces low-resolution artifacts at a substantial speed cost.
+Neither bilinear upscale nor low-resolution RIFE recreates native 1080p detail.
+
+PROFILING AND DIRECTML CPU-POOL UPDATE
+Shader/spatial processing wall time is now measured. Performance summaries
+include capture, processing, and full RIFE time. RIFE substage summaries every
+five seconds show preprocessing, inference, postprocessing and total time.
+The displayed interpolation metric includes the entire operation, not only
+session.run. Timings reflect CPU-observed elapsed time, including applicable
+synchronization/transfers; not pure GPU-kernel duration.
+DirectML uses one ONNX CPU intra-op worker to reduce CPU pool contention.
+Controlled interleaved comparison, 8 samples per mode on the same game frames:
+Default pool: median pre/infer/post/total = 8.13/25.51/11.29/45.73 ms.
+One worker: median pre/infer/post/total = 7.13/25.62/9.51/41.86 ms.
+Maximum pixel difference between the two outputs: 0.
+This is a modest benchmark improvement, not a guaranteed gameplay speedup.
+94 combined regression tests passed. Quality settings remain unchanged.
+Remaining work: use sustained gameplay stage logs to guide transfer/resizing
+optimization and assess higher-resolution interpolation or model changes.
+
+OUTPUT REFINEMENT
+Rendering > Output refinement provides Off / Subtle / Crisp.
+The active profile uses Subtle. Other quality/preset settings were preserved.
+The same mild spatial filter runs on real and generated preview frames before
+telemetry text is drawn. It does not change RIFE inference resolution or recover
+missing detail. Crisp may emphasize halos; Off is an immediate A/B baseline.
+Applies to the CPU-frame preview, not the D3D11 pipeline.
+Measured 1080p synthetic overhead: Subtle 2.86 ms, Crisp 2.94 ms median.
+Refinement cost is also logged as a previous-frame sample during gameplay.
+38 focused tests passed for image behavior, GUI persistence and runtime wiring.
+The current Quality preset was recently taking 80-86 ms per RIFE call; this
+sharpening feature does not solve that inference bottleneck.
+
+RIFE 4.25 LITE TEST OPTION
+Frame Generation > Model now offers v3.6 and 4.25 Lite (experimental).
+v3.6 remains the default. Stop before switching models. Keep device 1,
+1 generated frame, and the same preset for a fair comparison.
+The candidate ran successfully on DirectML but was slower in the synthetic
+comparison (59.32 vs 22.41 ms). It is not advertised as a speed improvement.
+58 focused regression tests passed; model metadata handles 128-pixel padding.
+Source, license, hashes, validation results and export scripts are included.
+
+IFRNET-S TEST OPTION
+Frame Generation > Model now also offers IFRNet-S Vimeo90K (experimental).
+It uses the official MIT-licensed checkpoint exported as a two-input midpoint
+ONNX model; RIFE v3.6 remains the default. DirectML device 1, Balanced,
+1 generated frame, and Auto pacing are the recommended first live test.
+Same 320x180 sample frames, 10 measured calls after 3 warmups on device 1:
+  IFRNet-S median inference/total: 20.18/22.52 ms
+  RIFE v3.6 median inference/total: 17.80/20.83 ms
+Averages were essentially tied (19.76 vs 19.92 ms inference). This controlled
+test proves the backend works but does not predict artifact quality in a game.
+Compare water, HUD edges and camera motion live before choosing a winner.
+
+FAST QUALITY PRESET
+Added a 240x135 interpolation preset between Performance (160x90) and
+Balanced (320x180). IFRNet pads this internally to 240x144, then restores the
+16:9 output. It targets better detail than Performance while staying closer to
+the roughly 33 ms frame-generation budget than Balanced.
+Controlled IFRNet-S device-1 sample, 10 calls after 3 warmups:
+  median inference/total: 15.29/17.27 ms; p95 total: 22.09 ms.
+This is an unloaded model benchmark; sustained gameplay remains the deciding test.
+
+TEMPORAL STABILIZATION
+Rendering > Temporal stabilization is enabled by default and applies to every
+ONNX interpolation model. Duplicate/nearly identical frame pairs bypass model
+inference. Exact stationary pixels use the newer real frame; low-motion output
+is clamped to the range of the two real endpoints with a small tolerance.
+Eroded masks exclude moving-object boundaries, and clear motion remains under
+model control. Disable the switch for a direct comparison. This targets the
+observed real/generated shimmer while standing still; live game verification
+is still required before changing the conservative thresholds.

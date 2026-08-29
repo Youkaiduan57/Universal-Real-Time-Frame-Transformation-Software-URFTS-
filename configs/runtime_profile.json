@@ -1,0 +1,9 @@
+{
+  "capture_backend": "wgc",
+  "fsr1_like_edge_strength": 0.35,
+  "fsr1_like_sharpening_enabled": true,
+  "fsr1_like_sharpening_strength": 0.2,
+  "opencv_threads": 8,
+  "processing_backend": "opencv_cpu",
+  "upscaling_method": "bicubic"
+}

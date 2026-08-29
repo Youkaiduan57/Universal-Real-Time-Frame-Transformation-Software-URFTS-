@@ -1,0 +1,28 @@
+F.                                                                       [100%]
+================================== FAILURES ===================================
+___________ test_fast_quality_preset_uses_240_by_135_interpolation ____________
+
+qt_app = <PySide6.QtWidgets.QApplication(0x1acca44a2f0) at 0x000001ACCCE59800>
+tmp_path = WindowsPath('C:/Users/ruthr/AppData/Local/Temp/pytest-of-ruthr/pytest-13/test_fast_quality_preset_uses_0')
+
+    def test_fast_quality_preset_uses_240_by_135_interpolation(qt_app, tmp_path: Path) -> None:
+        window = make_window(qt_app, tmp_path)
+        window.frame_generation_control.set_value("rife")
+        index = window.preset_combo.findData("fast_quality")
+        assert index >= 0
+        window.preset_combo.setCurrentIndex(index)
+        configuration = window._configuration()
+        assert configuration.preset == "fast_quality"
+        args = configuration.to_engine_args()
+        assert (args.rife_input_width, args.rife_input_height) == (240, 135)
+        assert window.ai_width.value() == 240
+        assert window.ai_height.value() == 135
+        window.close()
+>       assert SettingsStore(tmp_path/"gui.json").load().rife_model_path==str(IFRNET_MODEL)
+                                                                              ^^^^^^^^^^^^
+E       NameError: name 'IFRNET_MODEL' is not defined
+
+tests\test_ui.py:475: NameError
+=========================== short test summary info ===========================
+FAILED tests/test_ui.py::test_fast_quality_preset_uses_240_by_135_interpolation
+1 failed, 1 passed in 4.50s

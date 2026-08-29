@@ -1,0 +1,8 @@
+numpy>=1.26,<3
+opencv-contrib-python>=4.9,<5
+pywin32>=306
+mss>=9,<11
+dxcam>=0.0.5
+onnxruntime-directml>=1.18,<2
+psutil>=5.9,<8
+comtypes>=1.4,<2

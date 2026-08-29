@@ -1,0 +1,825 @@
+"""Frame-interpolation interfaces and real RIFE ONNX midpoint inference."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
+import time
+import logging
+from typing import Any, Callable, Protocol
+
+import cv2
+import numpy as np
+import onnxruntime as ort
+
+from resource_validation import ResourceLease
+
+
+SUPPORTED_INTERPOLATOR_LAYOUTS = ("nchw", "nhwc")
+SUPPORTED_INTERPOLATOR_PROVIDERS = ("cpu", "directml")
+
+
+class FrameInterpolatorError(RuntimeError):
+    """Raised when a frame interpolator cannot initialize or be used."""
+
+
+class RIFEInterpolatorError(FrameInterpolatorError):
+    """Raised for unsupported or unavailable RIFE ONNX infrastructure."""
+
+
+class FrameInterpolator(ABC):
+    """Reusable lifecycle interface for optional frame interpolation."""
+
+    produces_intermediate_frame = False
+
+    @abstractmethod
+    def initialize(self) -> None:
+        """Initialize resources required by the interpolator."""
+
+    @abstractmethod
+    def interpolate(self, frame_a: Any, frame_b: Any) -> Any:
+        """Return the frame selected or produced between two input frames."""
+
+    @abstractmethod
+    def shutdown(self) -> None:
+        """Release owned resources. Implementations must be idempotent."""
+
+
+class NoOpInterpolator(FrameInterpolator):
+    """Lifecycle-aware interpolator that returns the current frame unchanged."""
+
+    def __init__(self) -> None:
+        self._initialized = False
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    def initialize(self) -> None:
+        self._initialized = True
+
+    def interpolate(self, frame_a: Any, frame_b: Any) -> Any:
+        del frame_a
+        if not self._initialized:
+            raise FrameInterpolatorError("NoOpInterpolator is not initialized.")
+        return frame_b
+
+    def shutdown(self) -> None:
+        self._initialized = False
+
+
+@dataclass(frozen=True, slots=True)
+class RIFETensorMetadata:
+    name: str
+    dtype: str
+    shape: tuple[object, ...]
+    layout: str
+
+
+class _SessionValue(Protocol):
+    name: str
+    shape: list[object]
+    type: str
+
+
+class _InferenceSession(Protocol):
+    def get_inputs(self) -> list[_SessionValue]: ...
+
+    def get_outputs(self) -> list[_SessionValue]: ...
+
+    def get_providers(self) -> list[str]: ...
+
+    def run(self, output_names, input_feed): ...
+
+
+SessionFactory = Callable[..., _InferenceSession]
+
+
+def _normalize_choice(
+    value: str,
+    field_name: str,
+    supported_values: tuple[str, ...],
+) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string.")
+    normalized = value.strip().lower()
+    if normalized not in supported_values:
+        raise ValueError(
+            f"Unsupported {field_name}: {normalized}. Expected one of: "
+            f"{', '.join(supported_values)}."
+        )
+    return normalized
+
+
+def _static_dimension(value: object, tensor_name: str) -> int | None:
+    if isinstance(value, (int, np.integer)):
+        dimension = int(value)
+        if dimension <= 0:
+            raise RIFEInterpolatorError(
+                f"{tensor_name} contains non-positive dimension {dimension}."
+            )
+        return dimension
+    if value is None or isinstance(value, str):
+        return None
+    raise RIFEInterpolatorError(
+        f"{tensor_name} contains unsupported dimension metadata: {value!r}."
+    )
+
+
+class RIFEInterpolator(FrameInterpolator):
+    """Strict midpoint interpolation for two-input RIFE ONNX image models."""
+
+    produces_intermediate_frame = True
+
+    def __init__(
+        self,
+        model_path: str | Path | None = None,
+        *,
+        input_layout: str = "nchw",
+        output_layout: str = "nchw",
+        provider: str = "cpu",
+        device_id: int = 0,
+        inference_width: int | None = None,
+        inference_height: int | None = None,
+        temporal_stabilization: bool = False,
+        session_factory: SessionFactory | None = None,
+    ) -> None:
+        self.model_path = model_path
+        self.input_layout = _normalize_choice(
+            input_layout,
+            "RIFE input layout",
+            SUPPORTED_INTERPOLATOR_LAYOUTS,
+        )
+        self.output_layout = _normalize_choice(
+            output_layout,
+            "RIFE output layout",
+            SUPPORTED_INTERPOLATOR_LAYOUTS,
+        )
+        self.provider = _normalize_choice(
+            provider,
+            "RIFE execution provider",
+            SUPPORTED_INTERPOLATOR_PROVIDERS,
+        )
+        if isinstance(device_id, bool) or not isinstance(device_id, int):
+            raise TypeError("RIFE DirectML device ID must be an integer.")
+        if device_id < 0:
+            raise ValueError("RIFE DirectML device ID must be zero or greater.")
+        self.device_id = device_id
+        if (inference_width is None) != (inference_height is None):
+            raise ValueError(
+                "RIFE inference width and height must either both be set or both be omitted."
+            )
+        for value, name in (
+            (inference_width, "RIFE inference width"),
+            (inference_height, "RIFE inference height"),
+        ):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
+            ):
+                raise ValueError(f"{name} must be a positive integer.")
+        self.inference_width = inference_width
+        self.inference_height = inference_height
+        if not isinstance(temporal_stabilization, bool):
+            raise TypeError("Temporal stabilization must be a boolean.")
+        self.temporal_stabilization = temporal_stabilization
+        self._input_alignment = 32
+        self._session_factory = session_factory or ort.InferenceSession
+        self._session: _InferenceSession | None = None
+        self.available_providers: tuple[str, ...] = ()
+        self.active_providers: tuple[str, ...] = ()
+        self.input_metadata: tuple[RIFETensorMetadata, ...] = ()
+        self.output_metadata: RIFETensorMetadata | None = None
+        self._input_names: tuple[str, str] | None = None
+        self._output_name: str | None = None
+        self._input_shapes: tuple[tuple[object, ...], tuple[object, ...]] | None = None
+        self._output_shape: tuple[object, ...] | None = None
+        self._profile_samples = []
+        self._profile_started_at = time.perf_counter()
+        self.last_preprocessing_ms: float | None = None
+        self.last_inference_ms: float | None = None
+        self.last_postprocessing_ms: float | None = None
+        self.last_total_ms: float | None = None
+        self.input_dimensions: tuple[int, int] | None = None
+        self.padded_input_dimensions: tuple[int, int] | None = None
+        self.output_dimensions: tuple[int, int] | None = None
+        self.last_stabilized_fraction = 0.0
+        self.last_interpolation_confidence = 1.0
+        self.last_duplicate_bypass = False
+        self.last_endpoint_cache_hit = False
+        self._cached_inference_frame_b: np.ndarray | None = None
+        self._cached_tensor_b: np.ndarray | None = None
+        self._validation_session_lease = ResourceLease("onnx_sessions")
+
+    @property
+    def initialized(self) -> bool:
+        return self._session is not None
+
+    @staticmethod
+    def _validate_image_tensor(
+        value: _SessionValue,
+        layout: str,
+        tensor_name: str,
+    ) -> tuple[object, ...]:
+        if getattr(value, "type", None) != "tensor(float)":
+            raise RIFEInterpolatorError(
+                f"{tensor_name} must be float32; got {getattr(value, 'type', None)!r}."
+            )
+        shape = getattr(value, "shape", None)
+        if not isinstance(shape, (list, tuple)) or len(shape) != 4:
+            rank = len(shape) if isinstance(shape, (list, tuple)) else "unknown"
+            raise RIFEInterpolatorError(
+                f"{tensor_name} must be a rank-4 {layout.upper()} image tensor; "
+                f"got rank {rank}."
+            )
+        shape = tuple(shape)
+        static_shape = tuple(
+            _static_dimension(dimension, tensor_name) for dimension in shape
+        )
+        if static_shape[0] not in (None, 1):
+            raise RIFEInterpolatorError(
+                f"{tensor_name} must use batch size 1 or a dynamic batch dimension."
+            )
+        channel_index = 1 if layout == "nchw" else 3
+        if static_shape[channel_index] not in (None, 3):
+            raise RIFEInterpolatorError(
+                f"{tensor_name} must contain exactly 3 image channels for "
+                f"{layout.upper()}."
+            )
+        return shape
+
+    @staticmethod
+    def _spatial_dimensions(
+        shape: tuple[object, ...],
+        layout: str,
+        tensor_name: str,
+    ) -> tuple[int | None, int | None]:
+        indices = (2, 3) if layout == "nchw" else (1, 2)
+        return tuple(
+            _static_dimension(shape[index], tensor_name) for index in indices
+        )
+
+    @staticmethod
+    def _validate_matching_dimensions(
+        first: tuple[int | None, int | None],
+        second: tuple[int | None, int | None],
+        description: str,
+    ) -> None:
+        for first_dimension, second_dimension in zip(first, second):
+            if (
+                first_dimension is not None
+                and second_dimension is not None
+                and first_dimension != second_dimension
+            ):
+                raise RIFEInterpolatorError(
+                    f"RIFE {description} dimensions must match; got "
+                    f"{first} and {second}."
+                )
+
+    def initialize(self) -> None:
+        if self._session is not None:
+            return
+        if self.model_path is None or not str(self.model_path).strip():
+            raise RIFEInterpolatorError(
+                "RIFE initialization requires an ONNX model path."
+            )
+        resolved_path = Path(self.model_path).expanduser()
+        if not resolved_path.exists():
+            raise RIFEInterpolatorError(f"RIFE ONNX model does not exist: {resolved_path}")
+        if not resolved_path.is_file():
+            raise RIFEInterpolatorError(
+                f"RIFE ONNX model path is not a file: {resolved_path}"
+            )
+
+        try:
+            available_providers = tuple(ort.get_available_providers())
+        except Exception as error:
+            raise RIFEInterpolatorError(
+                f"Unable to query ONNX Runtime providers for RIFE: {error}"
+            ) from error
+        self.available_providers = available_providers
+        requested_provider = (
+            "CPUExecutionProvider"
+            if self.provider == "cpu"
+            else "DmlExecutionProvider"
+        )
+        if requested_provider not in available_providers:
+            raise RIFEInterpolatorError(
+                f"Requested {requested_provider} is unavailable for RIFE. "
+                f"Available providers: {', '.join(available_providers) or 'none'}."
+            )
+
+        session_options = ort.SessionOptions()
+        session_options.graph_optimization_level = (
+            ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        )
+        if self.provider == "directml":
+            # Avoid a large idle CPU pool competing with capture/OpenCV and the game.
+            session_options.intra_op_num_threads = 1
+            session_options.enable_mem_pattern = False
+            session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            providers: list[Any] = [
+                ("DmlExecutionProvider", {"device_id": self.device_id})
+            ]
+        else:
+            providers = ["CPUExecutionProvider"]
+
+        try:
+            session = self._session_factory(
+                str(resolved_path),
+                sess_options=session_options,
+                providers=providers,
+            )
+            active_providers = tuple(session.get_providers())
+            inputs = session.get_inputs()
+            outputs = session.get_outputs()
+        except Exception as error:
+            raise RIFEInterpolatorError(
+                f"Unable to load RIFE ONNX model '{resolved_path}': {error}"
+            ) from error
+        get_meta = getattr(session, "get_modelmeta", None)
+        metadata = get_meta().custom_metadata_map if get_meta is not None else {}
+        alignment = int(metadata.get("urfts.input_alignment", "32"))
+        if alignment < 16 or alignment > 512 or alignment & (alignment - 1):
+            raise RIFEInterpolatorError("Unsupported RIFE input alignment.")
+        self._input_alignment = alignment
+        if requested_provider not in active_providers:
+            raise RIFEInterpolatorError(
+                f"Requested {requested_provider} is not active for RIFE. Active "
+                f"providers: {', '.join(active_providers) or 'none'}."
+            )
+        if len(inputs) != 2:
+            raise RIFEInterpolatorError(
+                "RIFE infrastructure supports exactly two image inputs; "
+                f"the model exposes {len(inputs)} inputs."
+            )
+        if len(outputs) != 1:
+            raise RIFEInterpolatorError(
+                "RIFE infrastructure supports exactly one image output; "
+                f"the model exposes {len(outputs)} outputs."
+            )
+
+        input_shapes = tuple(
+            self._validate_image_tensor(
+                value,
+                self.input_layout,
+                f"RIFE input {index + 1}",
+            )
+            for index, value in enumerate(inputs)
+        )
+        output_shape = self._validate_image_tensor(
+            outputs[0],
+            self.output_layout,
+            "RIFE output",
+        )
+        first_spatial = self._spatial_dimensions(
+            input_shapes[0], self.input_layout, "RIFE input 1"
+        )
+        second_spatial = self._spatial_dimensions(
+            input_shapes[1], self.input_layout, "RIFE input 2"
+        )
+        output_spatial = self._spatial_dimensions(
+            output_shape, self.output_layout, "RIFE output"
+        )
+        self._validate_matching_dimensions(
+            first_spatial,
+            second_spatial,
+            "input spatial",
+        )
+        self._validate_matching_dimensions(
+            first_spatial,
+            output_spatial,
+            "input/output spatial",
+        )
+
+        self._session = session
+        self.active_providers = active_providers
+        self.input_metadata = tuple(
+            RIFETensorMetadata(
+                name=value.name,
+                dtype=value.type,
+                shape=shape,
+                layout=self.input_layout,
+            )
+            for value, shape in zip(inputs, input_shapes)
+        )
+        self.output_metadata = RIFETensorMetadata(
+            name=outputs[0].name,
+            dtype=outputs[0].type,
+            shape=output_shape,
+            layout=self.output_layout,
+        )
+        self._validation_session_lease.acquire()
+        self._input_names = (inputs[0].name, inputs[1].name)
+        self._output_name = outputs[0].name
+        self._input_shapes = (input_shapes[0], input_shapes[1])
+        self._output_shape = output_shape
+
+    @staticmethod
+    def _validate_frame_pair(frame_a: Any, frame_b: Any) -> None:
+        for frame, name in ((frame_a, "frame_a"), (frame_b, "frame_b")):
+            if not isinstance(frame, np.ndarray):
+                raise RIFEInterpolatorError(f"{name} must be a NumPy array.")
+            if frame.ndim != 3 or frame.shape[2] != 3:
+                raise RIFEInterpolatorError(
+                    f"{name} must have HxWx3 dimensions; got {frame.shape}."
+                )
+            if frame.dtype != np.uint8:
+                raise RIFEInterpolatorError(
+                    f"{name} must use uint8 pixels; got {frame.dtype}."
+                )
+        if frame_a.shape != frame_b.shape:
+            raise RIFEInterpolatorError(
+                f"RIFE input frame dimensions must match; got {frame_a.shape} "
+                f"and {frame_b.shape}."
+            )
+
+    @staticmethod
+    def _validate_runtime_shape(
+        actual_shape: tuple[int, ...],
+        metadata_shape: tuple[object, ...],
+        tensor_name: str,
+    ) -> None:
+        if len(actual_shape) != 4:
+            raise RIFEInterpolatorError(
+                f"{tensor_name} must be rank 4 at runtime; got {actual_shape}."
+            )
+        for index, (actual, expected) in enumerate(zip(actual_shape, metadata_shape)):
+            fixed_dimension = _static_dimension(expected, tensor_name)
+            if fixed_dimension is not None and actual != fixed_dimension:
+                raise RIFEInterpolatorError(
+                    f"{tensor_name} runtime shape {actual_shape} does not match "
+                    f"dimension {index}={fixed_dimension}."
+                )
+
+    def _prepare_input(
+        self,
+        frame: np.ndarray,
+        padded_height: int,
+        padded_width: int,
+    ) -> np.ndarray:
+        image = frame[..., ::-1].astype(np.float32) / np.float32(255.0)
+        if padded_height != frame.shape[0] or padded_width != frame.shape[1]:
+            image = np.pad(
+                image,
+                (
+                    (0, padded_height - frame.shape[0]),
+                    (0, padded_width - frame.shape[1]),
+                    (0, 0),
+                ),
+                mode="constant",
+            )
+        if self.input_layout == "nchw":
+            image = np.transpose(image, (2, 0, 1))
+        return np.ascontiguousarray(image[np.newaxis, ...], dtype=np.float32)
+
+    def _resize_for_inference(self, frame: np.ndarray) -> np.ndarray:
+        if self.inference_width is None or self.inference_height is None:
+            return frame
+        height, width = frame.shape[:2]
+        scale = min(
+            1.0,
+            self.inference_width / width,
+            self.inference_height / height,
+        )
+        if scale >= 1.0:
+            return frame
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        return cv2.resize(
+            frame,
+            (resized_width, resized_height),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    def _cache_second_endpoint(
+        self,
+        frame_b: np.ndarray,
+        inference_frame_b: np.ndarray,
+        tensor_b: np.ndarray | None,
+    ) -> None:
+        """Retain preprocessing for an explicitly continuous next frame pair."""
+        self._cached_inference_frame_b = (
+            np.ascontiguousarray(inference_frame_b.copy())
+            if np.shares_memory(frame_b, inference_frame_b)
+            else inference_frame_b
+        )
+        self._cached_tensor_b = tensor_b
+
+    def _cached_first_endpoint(self, reuse_cached_endpoint: bool):
+        """Return cached preprocessing only for a pipeline-declared pair."""
+        if not reuse_cached_endpoint or self._cached_inference_frame_b is None:
+            return None, None
+        self.last_endpoint_cache_hit = True
+        return self._cached_inference_frame_b, self._cached_tensor_b
+
+    def _prepare_output(
+        self,
+        value: object,
+        original_height: int,
+        original_width: int,
+        padded_height: int,
+        padded_width: int,
+    ) -> np.ndarray:
+        tensor = np.asarray(value)
+        if tensor.dtype != np.float32:
+            raise RIFEInterpolatorError(
+                f"RIFE output must be float32; got {tensor.dtype}."
+            )
+        if self._output_shape is None:
+            raise RIFEInterpolatorError("RIFE output metadata is unavailable.")
+        self._validate_runtime_shape(tensor.shape, self._output_shape, "RIFE output")
+        if tensor.shape[0] != 1:
+            raise RIFEInterpolatorError("RIFE output must contain exactly one frame.")
+        channel_index = 1 if self.output_layout == "nchw" else 3
+        if tensor.shape[channel_index] != 3:
+            raise RIFEInterpolatorError(
+                f"RIFE output must contain 3 channels for {self.output_layout.upper()}."
+            )
+        if not np.isfinite(tensor).all():
+            raise RIFEInterpolatorError("RIFE output contains NaN or infinite values.")
+        image = tensor[0]
+        if self.output_layout == "nchw":
+            image = np.transpose(image, (1, 2, 0))
+        if image.shape[:2] != (padded_height, padded_width):
+            raise RIFEInterpolatorError(
+                "RIFE output dimensions must match the padded input dimensions; "
+                f"expected {padded_width}x{padded_height}, got "
+                f"{image.shape[1]}x{image.shape[0]}."
+            )
+        image = image[:original_height, :original_width]
+        image = np.rint(np.clip(image, 0.0, 1.0) * np.float32(255.0)).astype(
+            np.uint8
+        )
+        return np.ascontiguousarray(image[..., ::-1])
+
+    @staticmethod
+    def _motion_summary(frame_a: np.ndarray, frame_b: np.ndarray) -> tuple[float, float]:
+        """Return cheap mean and p95 luma motion on a small analysis image."""
+        size = (160, 90)
+        first = cv2.resize(frame_a, size, interpolation=cv2.INTER_AREA)
+        second = cv2.resize(frame_b, size, interpolation=cv2.INTER_AREA)
+        first = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
+        second = cv2.cvtColor(second, cv2.COLOR_BGR2GRAY)
+        motion = cv2.absdiff(first, second)
+        return float(np.mean(motion)), float(np.percentile(motion, 95))
+
+    @staticmethod
+    def _match_midpoint_color(output, midpoint, reference_mask):
+        """Correct small generated-frame colour shifts using stable regions."""
+        if cv2.countNonZero(reference_mask) < 16:
+            return output
+        generated_mean = cv2.mean(output, mask=reference_mask)
+        target_mean = cv2.mean(midpoint, mask=reference_mask)
+        adjustment = tuple(
+            float(np.clip(target_mean[index] - generated_mean[index], -4.0, 4.0))
+            for index in range(3)
+        ) + (0.0,)
+        if max(abs(value) for value in adjustment[:3]) < 0.5:
+            return output
+        return cv2.add(output, adjustment)
+
+    @classmethod
+    def _confidence_composite(cls, output, frame_a, frame_b):
+        """Use model output only where a cheap midpoint confidence check passes.
+
+        All analysis is performed at inference resolution. The returned mask is
+        later reused to restore full-resolution endpoint detail without another
+        expensive full-size motion analysis.
+        """
+        difference = cv2.absdiff(frame_a, frame_b)
+        motion = cv2.max(
+            cv2.max(difference[..., 0], difference[..., 1]),
+            difference[..., 2],
+        )
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        low_motion = cv2.erode(cv2.compare(motion, 12, cv2.CMP_LE), kernel)
+        midpoint = cv2.addWeighted(frame_a, 0.5, frame_b, 0.5, 0.0)
+        output = cls._match_midpoint_color(output, midpoint, low_motion)
+
+        generated_difference = cv2.absdiff(output, midpoint)
+        residual = cv2.max(
+            cv2.max(generated_difference[..., 0], generated_difference[..., 1]),
+            generated_difference[..., 2],
+        )
+        allowed_residual = cv2.convertScaleAbs(motion, alpha=0.75, beta=8.0)
+        inconsistent = cv2.compare(residual, allowed_residual, cv2.CMP_GT)
+        inconsistent = cv2.dilate(inconsistent, kernel)
+        fallback = cv2.max(low_motion, inconsistent)
+        cv2.copyTo(midpoint, fallback, output)
+        fallback_fraction = float(cv2.countNonZero(fallback)) / float(fallback.size)
+        return output, fallback_fraction, fallback
+
+    @classmethod
+    def _stabilize_low_motion(cls, output, frame_a, frame_b):
+        """Backward-compatible wrapper for the confidence compositor."""
+        output, fallback_fraction, _mask = cls._confidence_composite(
+            output, frame_a, frame_b
+        )
+        return output, fallback_fraction
+
+    @staticmethod
+    def _restore_static_detail(output, frame_a, frame_b):
+        """Preserve exact static texture without modifying moving regions."""
+        difference = cv2.absdiff(frame_a, frame_b)
+        stable = cv2.inRange(difference, (0, 0, 0), (1, 1, 1))
+        stable = cv2.erode(stable, np.ones((3, 3), dtype=np.uint8))
+        cv2.copyTo(frame_b, stable, output)
+        return output
+
+    def interpolate(
+        self,
+        frame_a: Any,
+        frame_b: Any,
+        *,
+        reuse_cached_endpoint: bool = False,
+    ) -> Any:
+        if (
+            self._session is None
+            or self._input_names is None
+            or self._output_name is None
+            or self._input_shapes is None
+        ):
+            raise RIFEInterpolatorError("RIFEInterpolator is not initialized.")
+        self.last_preprocessing_ms = None
+        self.last_inference_ms = None
+        self.last_postprocessing_ms = None
+        self.last_total_ms = None
+        self.input_dimensions = None
+        self.padded_input_dimensions = None
+        self.output_dimensions = None
+        self.last_stabilized_fraction = 0.0
+        self.last_interpolation_confidence = 1.0
+        self.last_duplicate_bypass = False
+        self.last_endpoint_cache_hit = False
+        self._validate_frame_pair(frame_a, frame_b)
+        total_start = time.perf_counter()
+        original_height, original_width = frame_a.shape[:2]
+        preprocessing_start = time.perf_counter()
+        inference_frame_a, cached_tensor_a = self._cached_first_endpoint(
+            reuse_cached_endpoint
+        )
+        if inference_frame_a is None:
+            inference_frame_a = self._resize_for_inference(frame_a)
+        inference_frame_b = self._resize_for_inference(frame_b)
+        if self.temporal_stabilization:
+            # Reuse the already downscaled inference inputs for motion analysis.
+            # An extra pair of full-resolution AREA resizes cost several ms per
+            # frame pair at 720p and provided no additional useful signal.
+            mean_motion, p95_motion = self._motion_summary(
+                inference_frame_a, inference_frame_b
+            )
+            if mean_motion <= 0.75 and p95_motion <= 2.0:
+                output = np.ascontiguousarray(frame_b.copy())
+                self.last_preprocessing_ms = (
+                    time.perf_counter() - preprocessing_start
+                ) * 1000.0
+                self.last_inference_ms = 0.0
+                self.last_postprocessing_ms = 0.0
+                self.last_total_ms = (time.perf_counter() - total_start) * 1000.0
+                self.last_stabilized_fraction = 1.0
+                self.last_interpolation_confidence = 1.0
+                self.last_duplicate_bypass = True
+                self.input_dimensions = (original_width, original_height)
+                self.padded_input_dimensions = (original_width, original_height)
+                self.output_dimensions = (original_width, original_height)
+                self._cache_second_endpoint(frame_b, inference_frame_b, None)
+                return output
+        inference_height, inference_width = inference_frame_a.shape[:2]
+        padded_height = ((inference_height + self._input_alignment - 1) // self._input_alignment) * self._input_alignment
+        padded_width = ((inference_width + self._input_alignment - 1) // self._input_alignment) * self._input_alignment
+        tensor_a = cached_tensor_a
+        if tensor_a is None:
+            tensor_a = self._prepare_input(
+                inference_frame_a, padded_height, padded_width
+            )
+        tensor_b = self._prepare_input(
+            inference_frame_b, padded_height, padded_width
+        )
+        self._cache_second_endpoint(frame_b, inference_frame_b, tensor_b)
+        self._validate_runtime_shape(
+            tensor_a.shape,
+            self._input_shapes[0],
+            "RIFE input 1",
+        )
+        self._validate_runtime_shape(
+            tensor_b.shape,
+            self._input_shapes[1],
+            "RIFE input 2",
+        )
+        self.last_preprocessing_ms = (
+            time.perf_counter() - preprocessing_start
+        ) * 1000.0
+        try:
+            inference_start = time.perf_counter()
+            outputs = self._session.run(
+                [self._output_name],
+                {
+                    self._input_names[0]: tensor_a,
+                    self._input_names[1]: tensor_b,
+                },
+            )
+            self.last_inference_ms = (
+                time.perf_counter() - inference_start
+            ) * 1000.0
+        except Exception as error:
+            self.last_inference_ms = None
+            raise RIFEInterpolatorError(f"RIFE ONNX inference failed: {error}") from error
+        if len(outputs) != 1:
+            raise RIFEInterpolatorError(
+                f"RIFE ONNX inference returned {len(outputs)} outputs; expected one."
+            )
+        postprocessing_start = time.perf_counter()
+        output = self._prepare_output(
+            outputs[0],
+            inference_height,
+            inference_width,
+            padded_height,
+            padded_width,
+        )
+        fallback_mask = None
+        if self.temporal_stabilization:
+            # Stabilize at the model's working resolution. Doing this after
+            # enlargement creates several full-size temporary images and can
+            # add over 100 ms per generated frame at 720p.
+            (
+                output,
+                self.last_stabilized_fraction,
+                fallback_mask,
+            ) = self._confidence_composite(
+                output, inference_frame_a, inference_frame_b
+            )
+            self.last_interpolation_confidence = 1.0 - self.last_stabilized_fraction
+        output_was_resized = output.shape[:2] != (original_height, original_width)
+        if output_was_resized:
+            output = cv2.resize(
+                output,
+                (original_width, original_height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+            output = np.ascontiguousarray(output)
+        if output_was_resized and fallback_mask is not None:
+            # Reconstruct uncertain regions from the original-resolution real
+            # endpoints. This avoids the visible sharp/soft alternation caused
+            # by enlarging every generated pixel from the small model input.
+            full_midpoint = cv2.addWeighted(frame_a, 0.5, frame_b, 0.5, 0.0)
+            full_fallback = cv2.resize(
+                fallback_mask,
+                (original_width, original_height),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            cv2.copyTo(full_midpoint, full_fallback, output)
+        elif output_was_resized:
+            output = self._restore_static_detail(output, frame_a, frame_b)
+        self.last_postprocessing_ms = (
+            time.perf_counter() - postprocessing_start
+        ) * 1000.0
+        self.last_total_ms = (time.perf_counter() - total_start) * 1000.0
+        self._profile_samples.append((self.last_preprocessing_ms, self.last_inference_ms,
+                                      self.last_postprocessing_ms, self.last_total_ms,
+                                      self.last_interpolation_confidence,
+                                      float(self.last_endpoint_cache_hit)))
+        if time.perf_counter() - self._profile_started_at >= 5.0:
+            samples = self._profile_samples
+            means = [sum(row[i] for row in samples) / len(samples) for i in range(6)]
+            logging.getLogger(__name__).info(
+                "RIFE stages (%s calls, %sx%s inference): preprocess %.2f ms, "
+                "inference %.2f ms, postprocess %.2f ms, total %.2f ms, "
+                "confidence %.1f%%, endpoint-cache %.1f%%",
+                len(samples), inference_width, inference_height,
+                *means[:4], means[4] * 100.0, means[5] * 100.0)
+            self._profile_samples = []
+            self._profile_started_at = time.perf_counter()
+        self.input_dimensions = (inference_width, inference_height)
+        self.padded_input_dimensions = (padded_width, padded_height)
+        self.output_dimensions = (output.shape[1], output.shape[0])
+        return output
+
+    def interpolate_continuous(self, frame_a: Any, frame_b: Any) -> Any:
+        """Interpolate a pair whose first endpoint was the prior pair's second."""
+        return self.interpolate(frame_a, frame_b, reuse_cached_endpoint=True)
+
+    def shutdown(self) -> None:
+        self._validation_session_lease.release()
+        self._session = None
+        self.available_providers = ()
+        self.active_providers = ()
+        self.input_metadata = ()
+        self.output_metadata = None
+        self._input_names = None
+        self._output_name = None
+        self._input_shapes = None
+        self._output_shape = None
+        self.last_preprocessing_ms = None
+        self.last_inference_ms = None
+        self.last_postprocessing_ms = None
+        self.last_total_ms = None
+        self.input_dimensions = None
+        self.padded_input_dimensions = None
+        self.output_dimensions = None
+        self.last_stabilized_fraction = 0.0
+        self.last_interpolation_confidence = 1.0
+        self.last_duplicate_bypass = False
+        self.last_endpoint_cache_hit = False
+        self._cached_inference_frame_b = None
+        self._cached_tensor_b = None

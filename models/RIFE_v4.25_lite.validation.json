@@ -1,0 +1,27 @@
+{
+  "source": "https://drive.google.com/file/d/1zlKblGuKNatulJNFf5jdB-emp9AqGK05/view",
+  "weights_sha256": "81cdba223fe72a120130cc8552e5d2ecac824259d406f0c15323b3decf96b8b1",
+  "onnx_sha256": "e688a517af0228e619358eb189aa8b56adf4ffa7ebca6452cf938de9043f1966",
+  "checks": [
+    {
+      "shape": [
+        128,
+        256
+      ],
+      "cpu_max_error": 0.004585564136505127,
+      "cpu_mean_error": 5.442945985123515e-05,
+      "dml_max_error": 0.0017053484916687012,
+      "dml_mean_error": 4.526277189143002e-05
+    },
+    {
+      "shape": [
+        256,
+        384
+      ],
+      "cpu_max_error": 0.002486109733581543,
+      "cpu_mean_error": 3.0238317776820622e-05,
+      "dml_max_error": 0.0039916932582855225,
+      "dml_mean_error": 4.7306239139288664e-05
+    }
+  ]
+}

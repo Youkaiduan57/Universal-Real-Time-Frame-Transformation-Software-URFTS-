@@ -1,0 +1,11 @@
+.venv/
+build/
+dist/
+output/*
+.pytest-tmp/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.spec
+!UniversalUpscaler.spec
+packaging-report*.json

@@ -1,0 +1,6 @@
+-r requirements-runtime.txt
+onnx>=1.16,<2
+pytest>=8,<10
+
+# Optional for model export and provenance tests:
+# torch>=2.2
