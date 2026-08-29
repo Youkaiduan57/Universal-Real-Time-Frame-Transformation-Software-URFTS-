@@ -19,8 +19,8 @@
   "fsr1_like_sharpening": true,
   "fsr1_like_sharpening_strength": 0.2,
   "generated_frames": 1,
-  "max_frame_latency_ms": 98.0,
-  "output_refinement": 0.0,
+  "max_frame_latency_ms": 94.0,
+  "output_refinement": 0.12,
   "performance_preset": "performance",
   "pipeline": "cpu",
   "profile_settings": {
@@ -45,8 +45,8 @@
       "fsr1_like_sharpening": true,
       "fsr1_like_sharpening_strength": 0.2,
       "generated_frames": 1,
-      "max_frame_latency_ms": 98.0,
-      "output_refinement": 0.0,
+      "max_frame_latency_ms": 94.0,
+      "output_refinement": 0.12,
       "performance_preset": "performance",
       "pipeline": "cpu",
       "provider": "directml",
@@ -56,7 +56,7 @@
       "show_performance_overlay": true,
       "target_fps": "auto",
       "temporal_stabilization": true,
-      "upscaling_method": "bilinear",
+      "upscaling_method": "bicubic",
       "upscaling_mode": "shader"
     }
   },
@@ -73,6 +73,6 @@
   "target_fps": "auto",
   "temporal_stabilization": true,
   "theme": "dark",
-  "upscaling_method": "bilinear",
+  "upscaling_method": "bicubic",
   "upscaling_mode": "shader"
 }

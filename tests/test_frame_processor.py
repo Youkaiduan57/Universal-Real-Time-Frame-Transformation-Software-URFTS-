@@ -22,5 +22,7 @@ def test_refinement_bypass_flat_fields_and_detail():
     result=refine_output(image,.12)
     assert result[4,4,0]>image[4,4,0]
     assert result.dtype==np.uint8
+    assert result.shape==image.shape
+    np.testing.assert_array_equal(refine_output(image,.12),result)
     np.testing.assert_array_equal(image,before)
     with pytest.raises(ValueError): refine_output(image,.3)

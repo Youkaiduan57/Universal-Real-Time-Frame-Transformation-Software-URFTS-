@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 
+import cv2
+
 from config import OUTPUT_HEIGHT, OUTPUT_WIDTH
 from processing_backend import ProcessingBackend
 from upscaler import Upscaler
@@ -36,17 +38,28 @@ class FrameProcessor:
         return processed_frame
 
 def refine_output(frame, strength=0.0):
-    """Mild, identical detail enhancement for real and generated output.
+    """Apply mild Gaussian unsharp masking to every presented frame.
 
-    Does not reconstruct missing detail. Zero bypasses all work and allocation.
+    The same deterministic spatial pass is used for real and generated frames,
+    so it cannot introduce alternating filter behavior. GaussianBlur is
+    separable and substantially cheaper at 1080p than the previous generic
+    2-D convolution. It does not reconstruct detail; zero remains a true
+    allocation-free bypass.
     """
     if not 0.0 <= strength <= 0.25:
         raise ValueError("Output refinement strength must be between 0 and 0.25.")
     if strength == 0:
         return frame
-    import cv2
-    import numpy as np
-    kernel = np.array([[0, -strength, 0],
-                       [-strength, 1 + 4 * strength, -strength],
-                       [0, -strength, 0]], dtype=np.float32)
-    return cv2.filter2D(frame, -1, kernel, borderType=cv2.BORDER_REPLICATE)
+    blurred = cv2.GaussianBlur(
+        frame,
+        (3, 3),
+        sigmaX=0.0,
+        borderType=cv2.BORDER_REFLECT101,
+    )
+    return cv2.addWeighted(
+        frame,
+        1.0 + strength,
+        blurred,
+        -strength,
+        0.0,
+    )

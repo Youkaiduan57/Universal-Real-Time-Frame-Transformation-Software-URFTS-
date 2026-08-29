@@ -8,6 +8,7 @@ from capture import MSSCaptureBackend
 from config import CaptureRegion, normalize_capture_backend
 from dxcam_capture import DXCamCaptureBackend
 from wgc_capture import WGCCaptureBackend
+from window_capture import crop_window_client
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,10 @@ class CaptureManager:
         self.requested_backend = normalize_capture_backend(backend)
         self.capture_region = capture_region or CaptureRegion()
         self.window_hwnd = window_hwnd
+        self._window_client_region = capture_region if window_hwnd is not None else None
         self.fallback_on_explicit_failure = fallback_on_explicit_failure
         self.backend_name: str | None = None
+        self._wgc_client_crop_logged = False
         self.backend = self._create_backend()
 
     def _create_backend(self):
@@ -112,6 +115,44 @@ class CaptureManager:
 
     def grab_frame(self):
         frame = self.backend.grab_frame()
+        if self.backend_name == "wgc" and self.window_hwnd is not None:
+            surface_height, surface_width = frame.shape[:2]
+            frame = crop_window_client(frame, self.window_hwnd)
+            client_height, client_width = frame.shape[:2]
+            if (
+                not self._wgc_client_crop_logged
+                and (client_width, client_height) != (surface_width, surface_height)
+            ):
+                logger.info(
+                    "WGC client crop: %sx%s window surface -> %sx%s game client",
+                    surface_width,
+                    surface_height,
+                    client_width,
+                    client_height,
+                )
+                self._wgc_client_crop_logged = True
+            elif not self._wgc_client_crop_logged and self._window_client_region is not None:
+                expected_size = (
+                    self._window_client_region.width,
+                    self._window_client_region.height,
+                )
+                if expected_size != (surface_width, surface_height):
+                    logger.warning(
+                        "WGC could not safely crop %sx%s surface to expected "
+                        "%sx%s client; retaining the complete surface",
+                        surface_width,
+                        surface_height,
+                        *expected_size,
+                    )
+                    self._wgc_client_crop_logged = True
+            client_region = self._window_client_region or self.capture_region
+            self.capture_region = CaptureRegion(
+                left=client_region.left,
+                top=client_region.top,
+                width=client_width,
+                height=client_height,
+            )
+            return frame
         backend_region = getattr(self.backend, "capture_region", None)
         if backend_region is not None:
             self.capture_region = backend_region

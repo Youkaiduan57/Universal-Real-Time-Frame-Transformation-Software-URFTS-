@@ -5,5 +5,5 @@
   "fsr1_like_sharpening_strength": 0.2,
   "opencv_threads": 8,
   "processing_backend": "opencv_cpu",
-  "upscaling_method": "bilinear"
+  "upscaling_method": "bicubic"
 }
