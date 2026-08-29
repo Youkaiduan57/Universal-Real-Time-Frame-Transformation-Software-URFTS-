@@ -1929,3 +1929,270 @@
 2026-08-29 22:21:42,204 | INFO | main | Preview refinement: previous sample 0.00 ms
 2026-08-29 22:21:44,078 | INFO | frame_interpolator | RIFE stages (71 calls, 160x90 inference): preprocess 5.62 ms, inference 16.58 ms, postprocess 6.04 ms, total 28.26 ms, confidence 25.0%
 2026-08-29 22:21:46,628 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:30:07,258 | INFO | main | ==================================================
+2026-08-29 22:30:07,258 | INFO | main | UniversalUpscaler
+2026-08-29 22:30:07,258 | INFO | main | Version: 0.1.0
+2026-08-29 22:30:07,258 | INFO | main | Initializing...
+2026-08-29 22:30:07,258 | INFO | main | Requested capture backend mode: Wgc
+2026-08-29 22:30:07,258 | INFO | main | Requested upscaling method: Bilinear
+2026-08-29 22:30:07,258 | INFO | main | Requested processing backend: OpenCV CPU
+2026-08-29 22:30:07,258 | INFO | main | Requested frame processor: SHADER
+2026-08-29 22:30:07,258 | INFO | main | Requested runtime pipeline: CPU
+2026-08-29 22:30:07,258 | INFO | main | Preview enabled: True
+2026-08-29 22:30:07,258 | INFO | main | ==================================================
+2026-08-29 22:30:07,258 | INFO | main | Selected window: Subnautica Below Zero (HWND 459162), client area 1280x720 at 320,194
+2026-08-29 22:30:07,287 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:30:07,353 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:30:07,372 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:30:07,372 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:30:07,372 | INFO | main | Active capture backend: WGC
+2026-08-29 22:30:07,403 | INFO | main | Available processing backends: OpenCV CPU, PyTorch CUDA
+2026-08-29 22:30:07,403 | INFO | main | Loaded processing backend from runtime profile: OpenCV CPU
+2026-08-29 22:30:07,403 | INFO | main | Active processing backend: OpenCV CPU
+2026-08-29 22:30:07,404 | INFO | main | Loaded runtime profile from C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\configs\runtime_profile.json
+2026-08-29 22:30:07,405 | INFO | main | Active OpenCV threads: 8
+2026-08-29 22:30:07,405 | INFO | main | Press Q to quit the preview.
+2026-08-29 22:30:07,406 | INFO | main | ==================================================
+2026-08-29 22:30:07,406 | INFO | main | Active frame processor: OpenCV CPU
+2026-08-29 22:30:08,318 | INFO | main | Selected RIFE model: C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\models\IFRNet_S_Vimeo90K.onnx
+2026-08-29 22:30:08,318 | INFO | main | Requested frame-generation DirectML device: 1
+2026-08-29 22:30:08,319 | INFO | main | Active frame generation: RIFE (DmlExecutionProvider, CPUExecutionProvider)
+2026-08-29 22:30:08,335 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:30:13,876 | INFO | frame_interpolator | RIFE warmup: 5 calls at 160x90 completed in 535.00 ms
+2026-08-29 22:30:13,904 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:30:13,971 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:30:13,987 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:30:13,988 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:30:14,029 | INFO | main | Performance (last 1 frames): average FPS 0.00, median frame 150.88 ms, p95 frame 150.88 ms, dropped frames 0, pacing error 0.01 ms, scheduled 49787.137051, actual 49787.137059, late 0, generated-late drops 0, real-late drops 0, source 0.00 FPS, presentation 0.00 FPS, state running, stages capture 147.13 ms, processing 2.29 ms, RIFE 0.00 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:14,031 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:14,155 | INFO | main | Game preview enabled: Alt-Tab hides output; Ctrl+Alt+Q stops.
+2026-08-29 22:30:14,453 | INFO | frame_interpolator | RIFE stages (1 calls, 160x90 inference): preprocess 4.36 ms, inference 18.15 ms, postprocess 5.84 ms, total 28.35 ms, confidence 10.8%
+2026-08-29 22:30:19,035 | INFO | main | Performance (last 60 frames): average FPS 53.39, median frame 74.06 ms, p95 frame 99.05 ms, dropped frames 6, pacing error 0.00 ms, scheduled 49792.142382, actual 49792.142386, late 0, generated-late drops 3, real-late drops 0, source 25.97 FPS, presentation 56.04 FPS, state running, stages capture 32.61 ms, processing 1.76 ms, RIFE 28.75 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:19,035 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:19,471 | INFO | frame_interpolator | RIFE stages (94 calls, 160x90 inference): preprocess 4.98 ms, inference 17.12 ms, postprocess 5.43 ms, total 27.54 ms, confidence 28.3%
+2026-08-29 22:30:24,058 | INFO | main | Performance (last 60 frames): average FPS 60.93, median frame 50.56 ms, p95 frame 74.05 ms, dropped frames 7, pacing error 0.02 ms, scheduled 49797.163716, actual 49797.163734, late 0, generated-late drops 5, real-late drops 0, source 24.85 FPS, presentation 59.50 FPS, state running, stages capture 33.25 ms, processing 1.41 ms, RIFE 9.08 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:24,059 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:24,475 | INFO | frame_interpolator | RIFE stages (93 calls, 160x90 inference): preprocess 4.90 ms, inference 16.81 ms, postprocess 5.54 ms, total 27.26 ms, confidence 26.7%
+2026-08-29 22:30:29,083 | INFO | main | Performance (last 60 frames): average FPS 59.18, median frame 49.54 ms, p95 frame 63.59 ms, dropped frames 9, pacing error 0.00 ms, scheduled 49802.190122, actual 49802.190127, late 0, generated-late drops 8, real-late drops 0, source 25.38 FPS, presentation 58.02 FPS, state running, stages capture 33.31 ms, processing 1.44 ms, RIFE 7.51 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:29,083 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:29,685 | INFO | frame_interpolator | RIFE stages (63 calls, 160x90 inference): preprocess 4.88 ms, inference 17.47 ms, postprocess 5.98 ms, total 28.33 ms, confidence 31.2%
+2026-08-29 22:30:34,087 | INFO | main | Performance (last 60 frames): average FPS 52.97, median frame 74.45 ms, p95 frame 98.90 ms, dropped frames 15, pacing error 0.02 ms, scheduled 49807.193373, actual 49807.193391, late 0, generated-late drops 14, real-late drops 0, source 24.65 FPS, presentation 56.13 FPS, state running, stages capture 32.54 ms, processing 2.09 ms, RIFE 28.91 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:34,088 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:34,695 | INFO | frame_interpolator | RIFE stages (140 calls, 160x90 inference): preprocess 5.17 ms, inference 17.77 ms, postprocess 6.33 ms, total 29.28 ms, confidence 33.0%
+2026-08-29 22:30:39,092 | INFO | main | Performance (last 60 frames): average FPS 58.54, median frame 74.35 ms, p95 frame 96.38 ms, dropped frames 21, pacing error 0.00 ms, scheduled 49812.198596, actual 49812.198600, late 0, generated-late drops 22, real-late drops 0, source 25.70 FPS, presentation 55.71 FPS, state running, stages capture 33.95 ms, processing 1.77 ms, RIFE 28.27 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:39,092 | INFO | main | Preview refinement: previous sample 0.01 ms
+2026-08-29 22:30:39,707 | INFO | frame_interpolator | RIFE stages (143 calls, 160x90 inference): preprocess 5.23 ms, inference 17.39 ms, postprocess 5.64 ms, total 28.27 ms, confidence 40.6%
+2026-08-29 22:30:44,101 | INFO | main | Performance (last 60 frames): average FPS 59.02, median frame 69.32 ms, p95 frame 82.80 ms, dropped frames 30, pacing error 0.01 ms, scheduled 49817.208135, actual 49817.208141, late 0, generated-late drops 28, real-late drops 0, source 26.11 FPS, presentation 57.50 FPS, state running, stages capture 33.56 ms, processing 1.67 ms, RIFE 25.88 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:44,101 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:44,718 | INFO | frame_interpolator | RIFE stages (141 calls, 160x90 inference): preprocess 5.42 ms, inference 17.61 ms, postprocess 6.10 ms, total 29.14 ms, confidence 43.4%
+2026-08-29 22:30:49,128 | INFO | main | Performance (last 60 frames): average FPS 58.25, median frame 70.57 ms, p95 frame 84.37 ms, dropped frames 35, pacing error 0.00 ms, scheduled 49822.234588, actual 49822.234592, late 0, generated-late drops 32, real-late drops 0, source 25.79 FPS, presentation 57.61 FPS, state running, stages capture 33.21 ms, processing 1.74 ms, RIFE 26.23 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:49,129 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:49,721 | INFO | frame_interpolator | RIFE stages (145 calls, 160x90 inference): preprocess 4.99 ms, inference 17.41 ms, postprocess 5.69 ms, total 28.10 ms, confidence 42.6%
+2026-08-29 22:30:54,145 | INFO | main | Performance (last 60 frames): average FPS 59.65, median frame 68.03 ms, p95 frame 80.69 ms, dropped frames 39, pacing error 0.01 ms, scheduled 49827.251876, actual 49827.251883, late 0, generated-late drops 34, real-late drops 0, source 25.12 FPS, presentation 59.09 FPS, state running, stages capture 33.16 ms, processing 1.77 ms, RIFE 25.21 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:54,146 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:54,757 | INFO | frame_interpolator | RIFE stages (145 calls, 160x90 inference): preprocess 5.21 ms, inference 16.77 ms, postprocess 5.83 ms, total 27.81 ms, confidence 39.7%
+2026-08-29 22:30:59,157 | INFO | main | Performance (last 60 frames): average FPS 57.36, median frame 71.87 ms, p95 frame 95.76 ms, dropped frames 46, pacing error 0.01 ms, scheduled 49832.263136, actual 49832.263145, late 0, generated-late drops 40, real-late drops 0, source 24.70 FPS, presentation 56.49 FPS, state running, stages capture 33.18 ms, processing 1.59 ms, RIFE 27.64 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:30:59,157 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:30:59,794 | INFO | frame_interpolator | RIFE stages (144 calls, 160x90 inference): preprocess 5.07 ms, inference 16.99 ms, postprocess 6.22 ms, total 28.30 ms, confidence 33.9%
+2026-08-29 22:31:04,161 | INFO | main | Performance (last 60 frames): average FPS 53.08, median frame 58.83 ms, p95 frame 96.56 ms, dropped frames 48, pacing error 0.01 ms, scheduled 49837.268385, actual 49837.268391, late 0, generated-late drops 42, real-late drops 0, source 24.75 FPS, presentation 56.21 FPS, state running, stages capture 32.49 ms, processing 1.55 ms, RIFE 18.16 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:31:04,161 | INFO | main | Preview refinement: previous sample 0.01 ms
+2026-08-29 22:31:04,808 | INFO | frame_interpolator | RIFE stages (83 calls, 160x90 inference): preprocess 4.65 ms, inference 15.34 ms, postprocess 5.92 ms, total 25.91 ms, confidence 30.9%
+2026-08-29 22:31:09,174 | INFO | main | Performance (last 60 frames): average FPS 58.94, median frame 70.41 ms, p95 frame 86.42 ms, dropped frames 51, pacing error 0.00 ms, scheduled 49842.281319, actual 49842.281324, late 0, generated-late drops 43, real-late drops 0, source 25.65 FPS, presentation 57.44 FPS, state running, stages capture 33.63 ms, processing 1.65 ms, RIFE 27.63 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:31:09,175 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:31:09,811 | INFO | frame_interpolator | RIFE stages (121 calls, 160x90 inference): preprocess 5.15 ms, inference 16.64 ms, postprocess 6.13 ms, total 27.93 ms, confidence 32.2%
+2026-08-29 22:31:14,204 | INFO | main | Performance (last 60 frames): average FPS 57.48, median frame 68.68 ms, p95 frame 97.30 ms, dropped frames 57, pacing error 0.02 ms, scheduled 49847.310439, actual 49847.310455, late 0, generated-late drops 52, real-late drops 0, source 24.86 FPS, presentation 55.37 FPS, state running, stages capture 32.69 ms, processing 1.48 ms, RIFE 21.95 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:31:14,205 | INFO | main | Preview refinement: previous sample 0.01 ms
+2026-08-29 22:31:16,418 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:41:04,139 | INFO | main | ==================================================
+2026-08-29 22:41:04,139 | INFO | main | UniversalUpscaler
+2026-08-29 22:41:04,139 | INFO | main | Version: 0.1.0
+2026-08-29 22:41:04,139 | INFO | main | Initializing...
+2026-08-29 22:41:04,139 | INFO | main | Requested capture backend mode: Wgc
+2026-08-29 22:41:04,139 | INFO | main | Requested upscaling method: Bicubic
+2026-08-29 22:41:04,139 | INFO | main | Requested processing backend: OpenCV CPU
+2026-08-29 22:41:04,139 | INFO | main | Requested frame processor: SHADER
+2026-08-29 22:41:04,139 | INFO | main | Requested runtime pipeline: CPU
+2026-08-29 22:41:04,139 | INFO | main | Preview enabled: True
+2026-08-29 22:41:04,139 | INFO | main | ==================================================
+2026-08-29 22:41:04,139 | INFO | main | Selected window: Subnautica Below Zero (HWND 459162), client area 1280x720 at 320,194
+2026-08-29 22:41:04,169 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:41:04,236 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:41:04,258 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:41:04,258 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:41:04,258 | INFO | main | Active capture backend: WGC
+2026-08-29 22:41:04,294 | INFO | capture_manager | WGC client crop: 1282x759 window surface -> 1280x720 game client
+2026-08-29 22:41:04,309 | INFO | main | Available processing backends: OpenCV CPU, PyTorch CUDA
+2026-08-29 22:41:04,311 | INFO | main | Loaded processing backend from runtime profile: OpenCV CPU
+2026-08-29 22:41:04,311 | INFO | main | Active processing backend: OpenCV CPU
+2026-08-29 22:41:04,312 | INFO | main | Loaded runtime profile from C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\configs\runtime_profile.json
+2026-08-29 22:41:04,312 | INFO | main | Active OpenCV threads: 8
+2026-08-29 22:41:04,313 | INFO | main | Press Q to quit the preview.
+2026-08-29 22:41:04,313 | INFO | main | ==================================================
+2026-08-29 22:41:04,314 | INFO | main | Active frame processor: OpenCV CPU
+2026-08-29 22:41:05,037 | INFO | main | Selected RIFE model: C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\models\IFRNet_S_Vimeo90K.onnx
+2026-08-29 22:41:05,037 | INFO | main | Requested frame-generation DirectML device: 1
+2026-08-29 22:41:05,037 | INFO | main | Active frame generation: RIFE (DmlExecutionProvider, CPUExecutionProvider)
+2026-08-29 22:41:05,051 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:41:10,509 | INFO | frame_interpolator | RIFE warmup: 5 calls at 160x90 completed in 451.07 ms
+2026-08-29 22:41:10,538 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:41:10,607 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:41:10,625 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:41:10,627 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:41:10,659 | INFO | capture_manager | WGC client crop: 1282x759 window surface -> 1280x720 game client
+2026-08-29 22:41:10,665 | INFO | main | Performance (last 1 frames): average FPS 0.00, median frame 153.17 ms, p95 frame 153.17 ms, dropped frames 0, pacing error 0.00 ms, scheduled 50443.774254, actual 50443.774257, late 0, generated-late drops 0, real-late drops 0, source 0.00 FPS, presentation 0.00 FPS, state running, stages capture 147.39 ms, processing 4.51 ms, RIFE 0.00 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:10,665 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:10,774 | INFO | main | Game preview enabled: Alt-Tab hides output; Ctrl+Alt+Q stops.
+2026-08-29 22:41:15,332 | INFO | frame_interpolator | RIFE stages (1 calls, 160x90 inference): preprocess 4.49 ms, inference 28.85 ms, postprocess 8.71 ms, total 42.07 ms, confidence 9.2%
+2026-08-29 22:41:15,690 | INFO | main | Performance (last 60 frames): average FPS 52.56, median frame 51.72 ms, p95 frame 98.97 ms, dropped frames 3, pacing error 0.01 ms, scheduled 50448.798035, actual 50448.798050, late 0, generated-late drops 4, real-late drops 0, source 26.07 FPS, presentation 56.12 FPS, state running, stages capture 33.30 ms, processing 2.09 ms, RIFE 13.65 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:15,691 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:20,694 | INFO | main | Performance (last 60 frames): average FPS 58.99, median frame 48.75 ms, p95 frame 64.35 ms, dropped frames 5, pacing error 0.01 ms, scheduled 50453.802846, actual 50453.802853, late 0, generated-late drops 8, real-late drops 0, source 25.82 FPS, presentation 58.94 FPS, state running, stages capture 33.67 ms, processing 2.00 ms, RIFE 6.76 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:20,695 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:20,983 | INFO | frame_interpolator | RIFE stages (91 calls, 160x90 inference): preprocess 4.98 ms, inference 17.81 ms, postprocess 5.37 ms, total 28.17 ms, confidence 49.6%
+2026-08-29 22:41:25,703 | INFO | main | Performance (last 60 frames): average FPS 54.87, median frame 69.78 ms, p95 frame 95.20 ms, dropped frames 15, pacing error 0.01 ms, scheduled 50458.811727, actual 50458.811733, late 0, generated-late drops 13, real-late drops 0, source 26.22 FPS, presentation 55.17 FPS, state running, stages capture 32.89 ms, processing 2.23 ms, RIFE 27.85 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:25,704 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:25,995 | INFO | frame_interpolator | RIFE stages (125 calls, 160x90 inference): preprocess 5.31 ms, inference 17.95 ms, postprocess 6.20 ms, total 29.46 ms, confidence 38.1%
+2026-08-29 22:41:30,715 | INFO | main | Performance (last 60 frames): average FPS 62.69, median frame 49.56 ms, p95 frame 64.95 ms, dropped frames 43, pacing error 0.01 ms, scheduled 50463.824794, actual 50463.824803, late 0, generated-late drops 21, real-late drops 0, source 26.39 FPS, presentation 56.27 FPS, state running, stages capture 26.70 ms, processing 1.66 ms, RIFE 4.90 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:30,716 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:35,717 | INFO | main | Performance (last 60 frames): average FPS 57.69, median frame 47.20 ms, p95 frame 63.12 ms, dropped frames 47, pacing error 0.01 ms, scheduled 50468.827064, actual 50468.827073, late 0, generated-late drops 21, real-late drops 0, source 25.05 FPS, presentation 65.02 FPS, state running, stages capture 33.64 ms, processing 1.95 ms, RIFE 5.49 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:35,717 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:38,748 | INFO | frame_interpolator | RIFE stages (105 calls, 160x90 inference): preprocess 5.55 ms, inference 17.78 ms, postprocess 5.66 ms, total 29.00 ms, confidence 45.5%
+2026-08-29 22:41:40,723 | INFO | main | Performance (last 60 frames): average FPS 54.44, median frame 72.17 ms, p95 frame 102.29 ms, dropped frames 50, pacing error 0.00 ms, scheduled 50473.831838, actual 50473.831842, late 0, generated-late drops 24, real-late drops 0, source 24.14 FPS, presentation 54.94 FPS, state running, stages capture 34.18 ms, processing 2.64 ms, RIFE 27.24 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:40,723 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:43,773 | INFO | frame_interpolator | RIFE stages (142 calls, 160x90 inference): preprocess 5.04 ms, inference 18.76 ms, postprocess 5.31 ms, total 29.11 ms, confidence 46.8%
+2026-08-29 22:41:45,737 | INFO | main | Performance (last 60 frames): average FPS 59.01, median frame 70.82 ms, p95 frame 90.20 ms, dropped frames 57, pacing error 0.02 ms, scheduled 50478.845071, actual 50478.845088, late 0, generated-late drops 38, real-late drops 0, source 25.11 FPS, presentation 55.36 FPS, state running, stages capture 33.83 ms, processing 2.94 ms, RIFE 25.89 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:45,739 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:48,791 | INFO | frame_interpolator | RIFE stages (140 calls, 160x90 inference): preprocess 5.34 ms, inference 18.54 ms, postprocess 5.79 ms, total 29.68 ms, confidence 52.9%
+2026-08-29 22:41:50,764 | INFO | main | Performance (last 60 frames): average FPS 58.74, median frame 48.61 ms, p95 frame 58.80 ms, dropped frames 65, pacing error 0.02 ms, scheduled 50483.872160, actual 50483.872176, late 0, generated-late drops 50, real-late drops 0, source 26.36 FPS, presentation 57.33 FPS, state running, stages capture 33.90 ms, processing 1.99 ms, RIFE 5.91 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:50,765 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:53,822 | INFO | frame_interpolator | RIFE stages (65 calls, 160x90 inference): preprocess 5.05 ms, inference 16.20 ms, postprocess 5.05 ms, total 26.31 ms, confidence 55.1%
+2026-08-29 22:41:55,770 | INFO | main | Performance (last 60 frames): average FPS 58.58, median frame 68.90 ms, p95 frame 95.72 ms, dropped frames 68, pacing error 0.02 ms, scheduled 50488.879364, actual 50488.879380, late 0, generated-late drops 52, real-late drops 0, source 24.88 FPS, presentation 57.90 FPS, state running, stages capture 32.92 ms, processing 2.40 ms, RIFE 25.67 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:41:55,771 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:41:57,508 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:42:21,885 | INFO | main | ==================================================
+2026-08-29 22:42:21,885 | INFO | main | UniversalUpscaler
+2026-08-29 22:42:21,885 | INFO | main | Version: 0.1.0
+2026-08-29 22:42:21,885 | INFO | main | Initializing...
+2026-08-29 22:42:21,885 | INFO | main | Requested capture backend mode: Wgc
+2026-08-29 22:42:21,885 | INFO | main | Requested upscaling method: Bicubic
+2026-08-29 22:42:21,885 | INFO | main | Requested processing backend: OpenCV CPU
+2026-08-29 22:42:21,885 | INFO | main | Requested frame processor: SHADER
+2026-08-29 22:42:21,885 | INFO | main | Requested runtime pipeline: CPU
+2026-08-29 22:42:21,885 | INFO | main | Preview enabled: True
+2026-08-29 22:42:21,885 | INFO | main | ==================================================
+2026-08-29 22:42:21,885 | INFO | main | Selected window: Subnautica Below Zero (HWND 459162), client area 1280x720 at 320,194
+2026-08-29 22:42:21,923 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:42:22,010 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:42:22,029 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:42:22,029 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:42:22,030 | INFO | main | Active capture backend: WGC
+2026-08-29 22:42:22,048 | INFO | capture_manager | WGC client crop: 1282x759 window surface -> 1280x720 game client
+2026-08-29 22:42:22,048 | INFO | main | Available processing backends: OpenCV CPU, PyTorch CUDA
+2026-08-29 22:42:22,048 | INFO | main | Loaded processing backend from runtime profile: OpenCV CPU
+2026-08-29 22:42:22,048 | INFO | main | Active processing backend: OpenCV CPU
+2026-08-29 22:42:22,050 | INFO | main | Loaded runtime profile from C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\configs\runtime_profile.json
+2026-08-29 22:42:22,050 | INFO | main | Active OpenCV threads: 8
+2026-08-29 22:42:22,050 | INFO | main | Press Q to quit the preview.
+2026-08-29 22:42:22,050 | INFO | main | ==================================================
+2026-08-29 22:42:22,051 | INFO | main | Active frame processor: OpenCV CPU
+2026-08-29 22:42:22,658 | INFO | main | Selected RIFE model: C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\models\IFRNet_S_Vimeo90K.onnx
+2026-08-29 22:42:22,660 | INFO | main | Requested frame-generation DirectML device: 1
+2026-08-29 22:42:22,660 | INFO | main | Active frame generation: RIFE (DmlExecutionProvider, CPUExecutionProvider)
+2026-08-29 22:42:22,675 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:42:27,917 | INFO | frame_interpolator | RIFE warmup: 5 calls at 160x90 completed in 239.42 ms
+2026-08-29 22:42:27,949 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:42:28,020 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:42:28,037 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:42:28,037 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:42:28,052 | INFO | capture_manager | WGC client crop: 1282x759 window surface -> 1280x720 game client
+2026-08-29 22:42:28,057 | INFO | main | Performance (last 1 frames): average FPS 0.00, median frame 135.03 ms, p95 frame 135.03 ms, dropped frames 0, pacing error 0.00 ms, scheduled 50521.166692, actual 50521.166695, late 0, generated-late drops 0, real-late drops 0, source 0.00 FPS, presentation 0.00 FPS, state running, stages capture 130.64 ms, processing 3.00 ms, RIFE 0.00 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:28,057 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:42:28,151 | INFO | main | Game preview enabled: Alt-Tab hides output; Ctrl+Alt+Q stops.
+2026-08-29 22:42:28,258 | INFO | frame_interpolator | RIFE stages (1 calls, 160x90 inference): preprocess 4.07 ms, inference 24.02 ms, postprocess 6.27 ms, total 34.36 ms, confidence 69.2%
+2026-08-29 22:42:33,056 | INFO | main | Performance (last 60 frames): average FPS 54.00, median frame 75.42 ms, p95 frame 99.09 ms, dropped frames 3, pacing error 0.01 ms, scheduled 50526.167280, actual 50526.167288, late 0, generated-late drops 7, real-late drops 0, source 24.62 FPS, presentation 55.45 FPS, state running, stages capture 33.25 ms, processing 2.41 ms, RIFE 25.80 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:33,056 | INFO | main | Preview refinement: previous sample 3.79 ms
+2026-08-29 22:42:33,288 | INFO | frame_interpolator | RIFE stages (82 calls, 160x90 inference): preprocess 4.70 ms, inference 17.89 ms, postprocess 5.35 ms, total 27.95 ms, confidence 42.5%
+2026-08-29 22:42:38,062 | INFO | main | Performance (last 60 frames): average FPS 54.00, median frame 77.20 ms, p95 frame 103.39 ms, dropped frames 7, pacing error 0.02 ms, scheduled 50531.171963, actual 50531.171984, late 0, generated-late drops 12, real-late drops 0, source 24.80 FPS, presentation 56.53 FPS, state running, stages capture 33.51 ms, processing 2.40 ms, RIFE 27.66 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:38,063 | INFO | main | Preview refinement: previous sample 4.80 ms
+2026-08-29 22:42:38,312 | INFO | frame_interpolator | RIFE stages (145 calls, 160x90 inference): preprocess 4.99 ms, inference 17.84 ms, postprocess 5.62 ms, total 28.46 ms, confidence 46.7%
+2026-08-29 22:42:43,071 | INFO | main | Performance (last 60 frames): average FPS 59.74, median frame 77.86 ms, p95 frame 95.63 ms, dropped frames 11, pacing error 0.01 ms, scheduled 50536.182268, actual 50536.182276, late 0, generated-late drops 17, real-late drops 0, source 24.98 FPS, presentation 57.29 FPS, state running, stages capture 33.60 ms, processing 2.56 ms, RIFE 27.96 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:43,071 | INFO | main | Preview refinement: previous sample 3.35 ms
+2026-08-29 22:42:43,337 | INFO | frame_interpolator | RIFE stages (146 calls, 160x90 inference): preprocess 5.00 ms, inference 17.46 ms, postprocess 5.53 ms, total 28.00 ms, confidence 48.2%
+2026-08-29 22:42:48,091 | INFO | main | Performance (last 60 frames): average FPS 59.02, median frame 75.47 ms, p95 frame 90.69 ms, dropped frames 17, pacing error 0.05 ms, scheduled 50541.200647, actual 50541.200701, late 0, generated-late drops 26, real-late drops 0, source 25.02 FPS, presentation 57.68 FPS, state running, stages capture 33.42 ms, processing 2.71 ms, RIFE 26.42 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:48,093 | INFO | main | Preview refinement: previous sample 3.09 ms
+2026-08-29 22:42:48,360 | INFO | frame_interpolator | RIFE stages (143 calls, 160x90 inference): preprocess 5.05 ms, inference 17.52 ms, postprocess 5.48 ms, total 28.05 ms, confidence 36.4%
+2026-08-29 22:42:53,099 | INFO | main | Performance (last 60 frames): average FPS 52.84, median frame 82.76 ms, p95 frame 101.68 ms, dropped frames 28, pacing error 0.00 ms, scheduled 50546.209408, actual 50546.209412, late 0, generated-late drops 40, real-late drops 0, source 24.33 FPS, presentation 53.28 FPS, state running, stages capture 32.80 ms, processing 2.64 ms, RIFE 29.77 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:53,099 | INFO | main | Preview refinement: previous sample 3.58 ms
+2026-08-29 22:42:53,390 | INFO | frame_interpolator | RIFE stages (123 calls, 160x90 inference): preprocess 5.43 ms, inference 19.79 ms, postprocess 5.80 ms, total 31.02 ms, confidence 36.8%
+2026-08-29 22:42:58,103 | INFO | main | Performance (last 60 frames): average FPS 56.57, median frame 79.51 ms, p95 frame 95.97 ms, dropped frames 37, pacing error 0.01 ms, scheduled 50551.213765, actual 50551.213770, late 0, generated-late drops 50, real-late drops 0, source 25.26 FPS, presentation 55.42 FPS, state running, stages capture 33.09 ms, processing 2.48 ms, RIFE 29.03 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:42:58,104 | INFO | main | Preview refinement: previous sample 5.22 ms
+2026-08-29 22:42:58,406 | INFO | frame_interpolator | RIFE stages (139 calls, 160x90 inference): preprocess 5.31 ms, inference 19.25 ms, postprocess 5.64 ms, total 30.21 ms, confidence 45.9%
+2026-08-29 22:43:03,126 | INFO | main | Performance (last 60 frames): average FPS 59.39, median frame 74.34 ms, p95 frame 87.02 ms, dropped frames 43, pacing error 0.01 ms, scheduled 50556.236986, actual 50556.236993, late 0, generated-late drops 55, real-late drops 0, source 25.00 FPS, presentation 59.26 FPS, state running, stages capture 33.54 ms, processing 2.44 ms, RIFE 27.28 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:43:03,127 | INFO | main | Preview refinement: previous sample 3.54 ms
+2026-08-29 22:43:03,407 | INFO | frame_interpolator | RIFE stages (144 calls, 160x90 inference): preprocess 4.99 ms, inference 17.85 ms, postprocess 5.63 ms, total 28.49 ms, confidence 47.1%
+2026-08-29 22:43:07,987 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:46:37,984 | INFO | main | ==================================================
+2026-08-29 22:46:37,985 | INFO | main | UniversalUpscaler
+2026-08-29 22:46:37,985 | INFO | main | Version: 0.1.0
+2026-08-29 22:46:37,985 | INFO | main | Initializing...
+2026-08-29 22:46:37,985 | INFO | main | Requested capture backend mode: Wgc
+2026-08-29 22:46:37,985 | INFO | main | Requested upscaling method: Bicubic
+2026-08-29 22:46:37,985 | INFO | main | Requested processing backend: OpenCV CPU
+2026-08-29 22:46:37,985 | INFO | main | Requested frame processor: SHADER
+2026-08-29 22:46:37,985 | INFO | main | Requested runtime pipeline: CPU
+2026-08-29 22:46:37,985 | INFO | main | Preview enabled: True
+2026-08-29 22:46:37,985 | INFO | main | ==================================================
+2026-08-29 22:46:37,985 | INFO | main | Selected window: Subnautica Below Zero (HWND 459162), client area 1280x720 at 320,194
+2026-08-29 22:46:38,011 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:46:38,075 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:46:38,092 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:46:38,093 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:46:38,093 | INFO | main | Active capture backend: WGC
+2026-08-29 22:46:38,108 | INFO | capture_manager | WGC client crop: 1282x759 window surface -> 1280x720 game client
+2026-08-29 22:46:38,123 | INFO | main | Available processing backends: OpenCV CPU, PyTorch CUDA
+2026-08-29 22:46:38,123 | INFO | main | Loaded processing backend from runtime profile: OpenCV CPU
+2026-08-29 22:46:38,123 | INFO | main | Active processing backend: OpenCV CPU
+2026-08-29 22:46:38,126 | INFO | main | Loaded runtime profile from C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\configs\runtime_profile.json
+2026-08-29 22:46:38,126 | INFO | main | Active OpenCV threads: 8
+2026-08-29 22:46:38,126 | INFO | main | Press Q to quit the preview.
+2026-08-29 22:46:38,127 | INFO | main | ==================================================
+2026-08-29 22:46:38,127 | INFO | main | Active frame processor: OpenCV CPU
+2026-08-29 22:46:38,737 | INFO | main | Selected RIFE model: C:\Users\ruthr\Documents\Codex\2026-08-28\welcome-bnr-i-m-claude-bring\outputs\URFTS-Fixed\models\IFRNet_S_Vimeo90K.onnx
+2026-08-29 22:46:38,738 | INFO | main | Requested frame-generation DirectML device: 1
+2026-08-29 22:46:38,738 | INFO | main | Active frame generation: RIFE (DmlExecutionProvider, CPUExecutionProvider)
+2026-08-29 22:46:38,746 | INFO | wgc_capture | WGC capture closed for HWND 459162
+2026-08-29 22:46:44,245 | INFO | frame_interpolator | RIFE warmup: 5 calls at 160x90 completed in 494.75 ms
+2026-08-29 22:46:44,270 | INFO | capture_manager | WGC support: available (Native Windows.Graphics.Capture and D3D11 APIs are present.)
+2026-08-29 22:46:44,350 | INFO | wgc_capture | WGC initialized for HWND 459162 at 1282x759
+2026-08-29 22:46:44,365 | INFO | wgc_capture | WGC acquired first frame at 1282x759
+2026-08-29 22:46:44,365 | INFO | capture_manager | Selected capture backend: Windows Graphics Capture
+2026-08-29 22:46:44,386 | INFO | capture_manager | WGC client crop: 1282x759 window surface -> 1280x720 game client
+2026-08-29 22:46:44,393 | INFO | main | Performance (last 1 frames): average FPS 0.00, median frame 146.60 ms, p95 frame 146.60 ms, dropped frames 0, pacing error 0.01 ms, scheduled 50777.508794, actual 50777.508801, late 0, generated-late drops 0, real-late drops 0, source 0.00 FPS, presentation 0.00 FPS, state running, stages capture 138.75 ms, processing 6.06 ms, RIFE 0.00 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:46:44,393 | INFO | main | Preview refinement: previous sample 0.00 ms
+2026-08-29 22:46:44,513 | INFO | main | Game preview enabled: Alt-Tab hides output; Ctrl+Alt+Q stops.
+2026-08-29 22:46:44,979 | INFO | frame_interpolator | RIFE stages (1 calls, 160x90 inference): preprocess 4.38 ms, inference 17.08 ms, postprocess 4.24 ms, total 25.71 ms, confidence 32.8%
+2026-08-29 22:46:49,395 | INFO | main | Performance (last 60 frames): average FPS 56.29, median frame 57.00 ms, p95 frame 104.53 ms, dropped frames 10, pacing error 0.01 ms, scheduled 50782.509523, actual 50782.509530, late 0, generated-late drops 15, real-late drops 0, source 25.63 FPS, presentation 51.66 FPS, state running, stages capture 33.40 ms, processing 2.43 ms, RIFE 14.68 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:46:49,396 | INFO | main | Preview refinement: previous sample 3.23 ms
+2026-08-29 22:46:51,646 | INFO | frame_interpolator | RIFE stages (106 calls, 160x90 inference): preprocess 4.78 ms, inference 18.46 ms, postprocess 5.81 ms, total 29.06 ms, confidence 41.3%
+2026-08-29 22:46:54,429 | INFO | main | Performance (last 60 frames): average FPS 54.18, median frame 74.25 ms, p95 frame 97.14 ms, dropped frames 13, pacing error 0.01 ms, scheduled 50787.543265, actual 50787.543274, late 0, generated-late drops 21, real-late drops 0, source 24.35 FPS, presentation 54.38 FPS, state running, stages capture 33.64 ms, processing 3.57 ms, RIFE 26.83 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:46:54,429 | INFO | main | Preview refinement: previous sample 6.44 ms
+2026-08-29 22:46:56,675 | INFO | frame_interpolator | RIFE stages (140 calls, 160x90 inference): preprocess 4.93 ms, inference 18.14 ms, postprocess 5.58 ms, total 28.66 ms, confidence 44.6%
+2026-08-29 22:46:59,433 | INFO | main | Performance (last 60 frames): average FPS 55.96, median frame 72.75 ms, p95 frame 93.73 ms, dropped frames 22, pacing error 0.02 ms, scheduled 50792.547799, actual 50792.547819, late 0, generated-late drops 40, real-late drops 0, source 24.80 FPS, presentation 56.65 FPS, state running, stages capture 33.89 ms, processing 2.94 ms, RIFE 25.71 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:46:59,435 | INFO | main | Preview refinement: previous sample 7.30 ms
+2026-08-29 22:47:01,676 | INFO | frame_interpolator | RIFE stages (145 calls, 160x90 inference): preprocess 4.75 ms, inference 16.48 ms, postprocess 5.45 ms, total 26.69 ms, confidence 39.1%
+2026-08-29 22:47:04,436 | INFO | main | Performance (last 60 frames): average FPS 53.30, median frame 80.48 ms, p95 frame 96.03 ms, dropped frames 28, pacing error 0.01 ms, scheduled 50797.552049, actual 50797.552056, late 0, generated-late drops 51, real-late drops 0, source 24.09 FPS, presentation 50.94 FPS, state running, stages capture 33.85 ms, processing 2.80 ms, RIFE 28.63 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:47:04,436 | INFO | main | Preview refinement: previous sample 7.59 ms
+2026-08-29 22:47:06,696 | INFO | frame_interpolator | RIFE stages (138 calls, 160x90 inference): preprocess 4.85 ms, inference 19.27 ms, postprocess 5.75 ms, total 29.87 ms, confidence 43.0%
+2026-08-29 22:47:09,455 | INFO | main | Performance (last 60 frames): average FPS 52.02, median frame 77.75 ms, p95 frame 101.37 ms, dropped frames 39, pacing error 0.01 ms, scheduled 50802.570054, actual 50802.570060, late 0, generated-late drops 83, real-late drops 0, source 24.76 FPS, presentation 49.82 FPS, state running, stages capture 32.43 ms, processing 2.62 ms, RIFE 28.43 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:47:09,455 | INFO | main | Preview refinement: previous sample 5.39 ms
+2026-08-29 22:47:11,705 | INFO | frame_interpolator | RIFE stages (139 calls, 160x90 inference): preprocess 4.97 ms, inference 18.40 ms, postprocess 5.86 ms, total 29.23 ms, confidence 49.2%
+2026-08-29 22:47:14,468 | INFO | main | Performance (last 60 frames): average FPS 49.74, median frame 78.70 ms, p95 frame 95.35 ms, dropped frames 49, pacing error 0.01 ms, scheduled 50807.582526, actual 50807.582537, late 0, generated-late drops 101, real-late drops 0, source 25.12 FPS, presentation 51.94 FPS, state running, stages capture 32.75 ms, processing 2.84 ms, RIFE 29.13 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:47:14,468 | INFO | main | Preview refinement: previous sample 3.77 ms
+2026-08-29 22:47:16,726 | INFO | frame_interpolator | RIFE stages (140 calls, 160x90 inference): preprocess 4.97 ms, inference 18.57 ms, postprocess 6.00 ms, total 29.55 ms, confidence 36.5%
+2026-08-29 22:47:19,501 | INFO | main | Performance (last 60 frames): average FPS 54.73, median frame 74.90 ms, p95 frame 103.05 ms, dropped frames 58, pacing error 0.01 ms, scheduled 50812.617819, actual 50812.617826, late 0, generated-late drops 120, real-late drops 0, source 25.13 FPS, presentation 50.93 FPS, state running, stages capture 32.55 ms, processing 2.92 ms, RIFE 27.14 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:47:19,501 | INFO | main | Preview refinement: previous sample 3.61 ms
+2026-08-29 22:47:21,743 | INFO | frame_interpolator | RIFE stages (139 calls, 160x90 inference): preprocess 4.90 ms, inference 17.90 ms, postprocess 5.99 ms, total 28.80 ms, confidence 32.2%
+2026-08-29 22:47:24,504 | INFO | main | Performance (last 60 frames): average FPS 56.38, median frame 70.68 ms, p95 frame 91.91 ms, dropped frames 66, pacing error 0.02 ms, scheduled 50817.618334, actual 50817.618352, late 0, generated-late drops 135, real-late drops 0, source 25.96 FPS, presentation 55.40 FPS, state running, stages capture 33.65 ms, processing 3.13 ms, RIFE 25.86 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:47:24,504 | INFO | main | Preview refinement: previous sample 3.17 ms
+2026-08-29 22:47:29,526 | INFO | main | Performance (last 60 frames): average FPS 59.07, median frame 48.56 ms, p95 frame 63.49 ms, dropped frames 67, pacing error 0.00 ms, scheduled 50822.641983, actual 50822.641988, late 0, generated-late drops 140, real-late drops 0, source 25.48 FPS, presentation 59.30 FPS, state running, stages capture 33.58 ms, processing 2.40 ms, RIFE 6.52 ms, retries 0, recoveries 0, recovery failures 0, fallbacks 0.
+2026-08-29 22:47:29,526 | INFO | main | Preview refinement: previous sample 3.52 ms
+2026-08-29 22:47:30,944 | INFO | wgc_capture | WGC capture closed for HWND 459162
