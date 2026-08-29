@@ -314,25 +314,6 @@ class _MidpointInterpolator:
         self.shutdown_calls += 1
 
 
-def test_frame_generation_forwards_continuous_endpoint_hint() -> None:
-    class ContinuousInterpolator(_MidpointInterpolator):
-        def __init__(self):
-            super().__init__()
-            self.continuous_calls = []
-
-        def interpolate_continuous(self, frame_a, frame_b):
-            self.continuous_calls.append((frame_a, frame_b))
-            return self.interpolate(frame_a, frame_b)
-
-    interpolator = ContinuousInterpolator()
-    pipeline = AsyncFramePipeline(object(), frame_interpolator=interpolator)
-
-    assert pipeline._generate_intermediate_frames("A", "B") == [
-        (0.5, "middle(A,B)")
-    ]
-    assert interpolator.continuous_calls == [("A", "B")]
-
-
 def _wait_for_processed_frames(
     pipeline: AsyncFramePipeline,
     count: int,

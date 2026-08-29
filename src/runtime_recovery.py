@@ -488,13 +488,7 @@ class RecoveringInterpolator:
     def last_inference_ms(self) -> float | None:
         return getattr(self.component, "last_inference_ms", None)
 
-    def interpolate(
-        self,
-        frame_a: Any,
-        frame_b: Any,
-        *,
-        reuse_cached_endpoint: bool = False,
-    ) -> Any:
+    def interpolate(self, frame_a: Any, frame_b: Any) -> Any:
         fallback_activated = False
         if self._degraded:
             if self._attempt >= self.controller.policy.max_attempts:
@@ -528,11 +522,7 @@ class RecoveringInterpolator:
                 self.controller.mark_running()
             logger.info("runtime_recovery category=interpolation success=true attempt=%s", self._attempt)
         try:
-            continuous = getattr(self.component, "interpolate_continuous", None)
-            if reuse_cached_endpoint and callable(continuous):
-                result = continuous(frame_a, frame_b)
-            else:
-                result = self.component.interpolate(frame_a, frame_b)
+            result = self.component.interpolate(frame_a, frame_b)
             self._attempt = 0
             return result
         except Exception as error:
@@ -541,10 +531,6 @@ class RecoveringInterpolator:
             self._next_retry_at = self._clock() + self.controller.policy.backoff(self._attempt)
             self.controller.mark_degraded("interpolation", error)
             raise
-
-    def interpolate_continuous(self, frame_a: Any, frame_b: Any) -> Any:
-        """Preserve recovery behavior while forwarding continuity metadata."""
-        return self.interpolate(frame_a, frame_b, reuse_cached_endpoint=True)
 
     def shutdown(self) -> None:
         if self._closed:

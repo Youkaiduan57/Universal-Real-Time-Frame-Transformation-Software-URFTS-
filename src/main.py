@@ -1175,6 +1175,16 @@ def run_application(
                 publish_state(f"warming_up_{remaining}")
                 last_warmup_second = remaining
             shutdown_event.wait(min(0.1, max(0.0, warmup_ends_at - time.perf_counter())))
+        warmup_interpolator = getattr(frame_interpolator, "warmup", None)
+        if not shutdown_event.is_set() and callable(warmup_interpolator):
+            publish_state("compiling_frame_generation")
+            try:
+                warmup_interpolator()
+            except Exception as error:
+                logger.warning(
+                    "Frame-generation warmup failed; continuing normally: %s",
+                    error,
+                )
     if not shutdown_event.is_set():
         pipeline.start()
         publish_state("running")

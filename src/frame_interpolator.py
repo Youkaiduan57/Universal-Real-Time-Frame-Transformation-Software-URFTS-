@@ -206,9 +206,6 @@ class RIFEInterpolator(FrameInterpolator):
         self.last_stabilized_fraction = 0.0
         self.last_interpolation_confidence = 1.0
         self.last_duplicate_bypass = False
-        self.last_endpoint_cache_hit = False
-        self._cached_inference_frame_b: np.ndarray | None = None
-        self._cached_tensor_b: np.ndarray | None = None
         self._validation_session_lease = ResourceLease("onnx_sessions")
 
     @property
@@ -415,6 +412,61 @@ class RIFEInterpolator(FrameInterpolator):
         self._input_shapes = (input_shapes[0], input_shapes[1])
         self._output_shape = output_shape
 
+    def warmup(self, iterations: int = 5) -> float:
+        """Compile and exercise the configured ONNX graph before live capture."""
+        if isinstance(iterations, bool) or not isinstance(iterations, int):
+            raise TypeError("RIFE warmup iterations must be an integer.")
+        if iterations < 1:
+            raise ValueError("RIFE warmup iterations must be positive.")
+        if (
+            self._session is None
+            or self._input_names is None
+            or self._output_name is None
+        ):
+            raise RIFEInterpolatorError("RIFEInterpolator is not initialized.")
+        if self.inference_width is None or self.inference_height is None:
+            return 0.0
+
+        height = self.inference_height
+        width = self.inference_width
+        padded_height = (
+            (height + self._input_alignment - 1) // self._input_alignment
+        ) * self._input_alignment
+        padded_width = (
+            (width + self._input_alignment - 1) // self._input_alignment
+        ) * self._input_alignment
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        tensor = self._prepare_input(frame, padded_height, padded_width)
+        started = time.perf_counter()
+        try:
+            for _ in range(iterations):
+                outputs = self._session.run(
+                    [self._output_name],
+                    {
+                        self._input_names[0]: tensor,
+                        self._input_names[1]: tensor,
+                    },
+                )
+                if len(outputs) != 1:
+                    raise RIFEInterpolatorError(
+                        "RIFE ONNX warmup returned an unexpected output count."
+                    )
+        except RIFEInterpolatorError:
+            raise
+        except Exception as error:
+            raise RIFEInterpolatorError(
+                f"RIFE ONNX warmup inference failed: {error}"
+            ) from error
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        logging.getLogger(__name__).info(
+            "RIFE warmup: %s calls at %sx%s completed in %.2f ms",
+            iterations,
+            width,
+            height,
+            elapsed_ms,
+        )
+        return elapsed_ms
+
     @staticmethod
     def _validate_frame_pair(frame_a: Any, frame_b: Any) -> None:
         for frame, name in ((frame_a, "frame_a"), (frame_b, "frame_b")):
@@ -492,27 +544,6 @@ class RIFEInterpolator(FrameInterpolator):
             interpolation=cv2.INTER_AREA,
         )
 
-    def _cache_second_endpoint(
-        self,
-        frame_b: np.ndarray,
-        inference_frame_b: np.ndarray,
-        tensor_b: np.ndarray | None,
-    ) -> None:
-        """Retain preprocessing for an explicitly continuous next frame pair."""
-        self._cached_inference_frame_b = (
-            np.ascontiguousarray(inference_frame_b.copy())
-            if np.shares_memory(frame_b, inference_frame_b)
-            else inference_frame_b
-        )
-        self._cached_tensor_b = tensor_b
-
-    def _cached_first_endpoint(self, reuse_cached_endpoint: bool):
-        """Return cached preprocessing only for a pipeline-declared pair."""
-        if not reuse_cached_endpoint or self._cached_inference_frame_b is None:
-            return None, None
-        self.last_endpoint_cache_hit = True
-        return self._cached_inference_frame_b, self._cached_tensor_b
-
     def _prepare_output(
         self,
         value: object,
@@ -555,14 +586,28 @@ class RIFEInterpolator(FrameInterpolator):
 
     @staticmethod
     def _motion_summary(frame_a: np.ndarray, frame_b: np.ndarray) -> tuple[float, float]:
-        """Return cheap mean and p95 luma motion on a small analysis image."""
-        size = (160, 90)
-        first = cv2.resize(frame_a, size, interpolation=cv2.INTER_AREA)
-        second = cv2.resize(frame_b, size, interpolation=cv2.INTER_AREA)
-        first = cv2.cvtColor(first, cv2.COLOR_BGR2GRAY)
-        second = cv2.cvtColor(second, cv2.COLOR_BGR2GRAY)
+        """Return mean motion and the p95 threshold class used for bypass."""
+        first = cv2.cvtColor(frame_a, cv2.COLOR_BGR2GRAY)
+        second = cv2.cvtColor(frame_b, cv2.COLOR_BGR2GRAY)
         motion = cv2.absdiff(first, second)
-        return float(np.mean(motion)), float(np.percentile(motion, 95))
+        mean_motion = float(cv2.mean(motion)[0])
+        pixels_above_two = cv2.countNonZero(
+            cv2.compare(motion, 2, cv2.CMP_GT)
+        )
+        # p95 <= 2 exactly means no more than five percent of pixels exceed 2.
+        p95_class = 2.0 if pixels_above_two * 20 <= motion.size else 3.0
+        return mean_motion, p95_class
+
+    @staticmethod
+    def _active_motion_fraction(frame_a: np.ndarray, frame_b: np.ndarray) -> float:
+        """Return the fraction of pixels with clearly visible endpoint motion."""
+        difference = cv2.absdiff(frame_a, frame_b)
+        motion = cv2.max(
+            cv2.max(difference[..., 0], difference[..., 1]),
+            difference[..., 2],
+        )
+        active = cv2.compare(motion, 12, cv2.CMP_GT)
+        return float(cv2.countNonZero(active)) / float(active.size)
 
     @staticmethod
     def _match_midpoint_color(output, midpoint, reference_mask):
@@ -627,13 +672,7 @@ class RIFEInterpolator(FrameInterpolator):
         cv2.copyTo(frame_b, stable, output)
         return output
 
-    def interpolate(
-        self,
-        frame_a: Any,
-        frame_b: Any,
-        *,
-        reuse_cached_endpoint: bool = False,
-    ) -> Any:
+    def interpolate(self, frame_a: Any, frame_b: Any) -> Any:
         if (
             self._session is None
             or self._input_names is None
@@ -651,16 +690,11 @@ class RIFEInterpolator(FrameInterpolator):
         self.last_stabilized_fraction = 0.0
         self.last_interpolation_confidence = 1.0
         self.last_duplicate_bypass = False
-        self.last_endpoint_cache_hit = False
         self._validate_frame_pair(frame_a, frame_b)
         total_start = time.perf_counter()
         original_height, original_width = frame_a.shape[:2]
         preprocessing_start = time.perf_counter()
-        inference_frame_a, cached_tensor_a = self._cached_first_endpoint(
-            reuse_cached_endpoint
-        )
-        if inference_frame_a is None:
-            inference_frame_a = self._resize_for_inference(frame_a)
+        inference_frame_a = self._resize_for_inference(frame_a)
         inference_frame_b = self._resize_for_inference(frame_b)
         if self.temporal_stabilization:
             # Reuse the already downscaled inference inputs for motion analysis.
@@ -683,20 +717,40 @@ class RIFEInterpolator(FrameInterpolator):
                 self.input_dimensions = (original_width, original_height)
                 self.padded_input_dimensions = (original_width, original_height)
                 self.output_dimensions = (original_width, original_height)
-                self._cache_second_endpoint(frame_b, inference_frame_b, None)
                 return output
+            # A nominally still game scene can contain water, particles, HUD
+            # animation, or capture noise, so it will not satisfy the strict
+            # duplicate test above. When that activity occupies only a small
+            # part of the image, the confidence compositor would replace almost
+            # all model pixels with the endpoint midpoint anyway. Produce that
+            # stable midpoint directly and avoid an otherwise wasted inference.
+            active_motion_fraction = self._active_motion_fraction(
+                inference_frame_a, inference_frame_b
+            )
+            if mean_motion <= 3.0 and active_motion_fraction <= 0.08:
+                output = cv2.addWeighted(frame_a, 0.5, frame_b, 0.5, 0.0)
+                self.last_preprocessing_ms = (
+                    time.perf_counter() - preprocessing_start
+                ) * 1000.0
+                self.last_inference_ms = 0.0
+                self.last_postprocessing_ms = 0.0
+                self.last_total_ms = (time.perf_counter() - total_start) * 1000.0
+                self.last_stabilized_fraction = 1.0
+                self.last_interpolation_confidence = 0.0
+                self.last_duplicate_bypass = True
+                self.input_dimensions = (original_width, original_height)
+                self.padded_input_dimensions = (original_width, original_height)
+                self.output_dimensions = (original_width, original_height)
+                return np.ascontiguousarray(output)
         inference_height, inference_width = inference_frame_a.shape[:2]
         padded_height = ((inference_height + self._input_alignment - 1) // self._input_alignment) * self._input_alignment
         padded_width = ((inference_width + self._input_alignment - 1) // self._input_alignment) * self._input_alignment
-        tensor_a = cached_tensor_a
-        if tensor_a is None:
-            tensor_a = self._prepare_input(
-                inference_frame_a, padded_height, padded_width
-            )
+        tensor_a = self._prepare_input(
+            inference_frame_a, padded_height, padded_width
+        )
         tensor_b = self._prepare_input(
             inference_frame_b, padded_height, padded_width
         )
-        self._cache_second_endpoint(frame_b, inference_frame_b, tensor_b)
         self._validate_runtime_shape(
             tensor_a.shape,
             self._input_shapes[0],
@@ -777,27 +831,22 @@ class RIFEInterpolator(FrameInterpolator):
         self.last_total_ms = (time.perf_counter() - total_start) * 1000.0
         self._profile_samples.append((self.last_preprocessing_ms, self.last_inference_ms,
                                       self.last_postprocessing_ms, self.last_total_ms,
-                                      self.last_interpolation_confidence,
-                                      float(self.last_endpoint_cache_hit)))
+                                      self.last_interpolation_confidence))
         if time.perf_counter() - self._profile_started_at >= 5.0:
             samples = self._profile_samples
-            means = [sum(row[i] for row in samples) / len(samples) for i in range(6)]
+            means = [sum(row[i] for row in samples) / len(samples) for i in range(5)]
             logging.getLogger(__name__).info(
                 "RIFE stages (%s calls, %sx%s inference): preprocess %.2f ms, "
                 "inference %.2f ms, postprocess %.2f ms, total %.2f ms, "
-                "confidence %.1f%%, endpoint-cache %.1f%%",
+                "confidence %.1f%%",
                 len(samples), inference_width, inference_height,
-                *means[:4], means[4] * 100.0, means[5] * 100.0)
+                *means[:4], means[4] * 100.0)
             self._profile_samples = []
             self._profile_started_at = time.perf_counter()
         self.input_dimensions = (inference_width, inference_height)
         self.padded_input_dimensions = (padded_width, padded_height)
         self.output_dimensions = (output.shape[1], output.shape[0])
         return output
-
-    def interpolate_continuous(self, frame_a: Any, frame_b: Any) -> Any:
-        """Interpolate a pair whose first endpoint was the prior pair's second."""
-        return self.interpolate(frame_a, frame_b, reuse_cached_endpoint=True)
 
     def shutdown(self) -> None:
         self._validation_session_lease.release()
@@ -820,6 +869,3 @@ class RIFEInterpolator(FrameInterpolator):
         self.last_stabilized_fraction = 0.0
         self.last_interpolation_confidence = 1.0
         self.last_duplicate_bypass = False
-        self.last_endpoint_cache_hit = False
-        self._cached_inference_frame_b = None
-        self._cached_tensor_b = None

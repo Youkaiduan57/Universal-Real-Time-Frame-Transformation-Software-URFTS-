@@ -188,27 +188,6 @@ def test_interpolation_degrades_then_retries_while_real_path_can_continue() -> N
     assert wrapper.interpolate("B", "C") == "middle"
 
 
-def test_recovering_interpolator_forwards_continuous_endpoint_hint() -> None:
-    class ContinuousInterpolator(Interpolator):
-        def __init__(self):
-            super().__init__()
-            self.continuous_calls = []
-
-        def interpolate_continuous(self, a, b):
-            self.continuous_calls.append((a, b))
-            return self.interpolate(a, b)
-
-    component = ContinuousInterpolator()
-    wrapper = RecoveringInterpolator(
-        component,
-        lambda: ContinuousInterpolator(),
-        RecoveryController(policy=policy()),
-    )
-
-    assert wrapper.interpolate_continuous("A", "B") == "middle"
-    assert component.continuous_calls == [("A", "B")]
-
-
 def test_renderer_component_is_recreated_after_device_failure() -> None:
     class Renderer:
         def __init__(self, fail=False):

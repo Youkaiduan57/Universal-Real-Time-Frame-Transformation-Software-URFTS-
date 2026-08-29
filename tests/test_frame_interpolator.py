@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
 
@@ -164,6 +165,50 @@ def test_rife_interpolates_matching_frames_after_initialization(
     assert interpolator.padded_input_dimensions == (32, 32)
     assert interpolator.output_dimensions == (6, 4)
     assert interpolator.last_inference_ms is not None
+
+
+def test_rife_warmup_compiles_configured_internal_resolution(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "rife.onnx"
+    model_path.touch()
+    monkeypatch.setattr(
+        frame_interpolator.ort,
+        "get_available_providers",
+        lambda: ["CPUExecutionProvider"],
+    )
+    sessions = []
+
+    class CountingSession(_FakeSession):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.run_calls = 0
+
+        def run(self, output_names, input_feed):
+            self.run_calls += 1
+            return super().run(output_names, input_feed)
+
+    def create_session(*args, **kwargs):
+        session = CountingSession(*args, **kwargs)
+        sessions.append(session)
+        return session
+
+    interpolator = RIFEInterpolator(
+        model_path,
+        session_factory=create_session,
+        inference_width=16,
+        inference_height=16,
+    )
+    interpolator.initialize()
+    try:
+        assert interpolator.warmup(iterations=3) >= 0.0
+        assert sessions[0].run_calls == 3
+        assert interpolator.last_inference_ms is None
+        with pytest.raises(ValueError, match="positive"):
+            interpolator.warmup(iterations=0)
+    finally:
+        interpolator.shutdown()
 
 
 def test_rife_optional_internal_resolution_restores_presented_dimensions(
@@ -447,6 +492,72 @@ def test_temporal_stabilization_bypasses_effectively_duplicate_frames(tmp_path):
         r.shutdown()
 
 
+def test_motion_summary_preserves_five_percent_duplicate_boundary():
+    a = np.zeros((20, 20, 3), dtype=np.uint8)
+    b = a.copy()
+    b.reshape(-1, 3)[:20] = 3
+    mean_motion, p95_class = RIFEInterpolator._motion_summary(a, b)
+    assert mean_motion > 0.0
+    assert p95_class == 2.0
+
+    b.reshape(-1, 3)[20] = 3
+    _mean_motion, p95_class = RIFEInterpolator._motion_summary(a, b)
+    assert p95_class == 3.0
+
+
+def test_active_motion_fraction_counts_visible_endpoint_changes():
+    a = np.zeros((10, 10, 3), dtype=np.uint8)
+    b = a.copy()
+    b[:2, :5] = 13
+
+    assert RIFEInterpolator._active_motion_fraction(a, b) == pytest.approx(0.1)
+
+
+def test_temporal_stabilization_bypasses_sparse_ambient_motion(tmp_path):
+    model = tmp_path / "rife.onnx"
+    model.write_bytes(b"model")
+    r = RIFEInterpolator(
+        model,
+        session_factory=_FakeSession,
+        temporal_stabilization=True,
+    )
+    r.initialize()
+    try:
+        a = np.full((64, 64, 3), 80, dtype=np.uint8)
+        b = a.copy()
+        b[:10, :20] = 100  # 4.88% localized animation, not a strict duplicate.
+
+        result = r.interpolate(a, b)
+
+        np.testing.assert_array_equal(result, cv2.addWeighted(a, 0.5, b, 0.5, 0.0))
+        assert r.last_duplicate_bypass is True
+        assert r.last_inference_ms == 0.0
+        assert r.last_interpolation_confidence == 0.0
+    finally:
+        r.shutdown()
+
+
+def test_temporal_stabilization_keeps_inference_for_camera_motion(tmp_path):
+    model = tmp_path / "rife.onnx"
+    model.write_bytes(b"model")
+    r = RIFEInterpolator(
+        model,
+        session_factory=_FakeSession,
+        temporal_stabilization=True,
+    )
+    r.initialize()
+    try:
+        a = np.zeros((64, 64, 3), dtype=np.uint8)
+        b = np.full_like(a, 20)
+
+        r.interpolate(a, b)
+
+        assert r.last_duplicate_bypass is False
+        assert r.last_inference_ms is not None
+    finally:
+        r.shutdown()
+
+
 def test_temporal_stabilization_preserves_motion_and_clamps_low_motion():
     a = np.full((32, 32, 3), 100, dtype=np.uint8)
     b = np.full_like(a, 102)
@@ -555,35 +666,6 @@ def test_confidence_fallback_restores_full_resolution_static_texture(tmp_path):
         )
     finally:
         r.shutdown()
-
-
-def test_continuous_pairs_reuse_exact_second_endpoint_preprocessing(tmp_path):
-    model = tmp_path / "rife.onnx"
-    model.touch()
-    r = RIFEInterpolator(
-        model,
-        session_factory=_FakeSession,
-        inference_width=16,
-        inference_height=16,
-    )
-    r.initialize()
-    a = np.zeros((64, 64, 3), dtype=np.uint8)
-    b = np.full_like(a, 60)
-    c = np.full_like(a, 120)
-    try:
-        first = r.interpolate(a, b)
-        assert r.last_endpoint_cache_hit is False
-        second = r.interpolate_continuous(b.copy(), c)
-        assert r.last_endpoint_cache_hit is True
-        np.testing.assert_array_equal(first, 30)
-        np.testing.assert_array_equal(second, 90)
-
-        r.interpolate(b.copy(), c)
-        assert r.last_endpoint_cache_hit is False
-    finally:
-        r.shutdown()
-    assert r._cached_inference_frame_b is None
-    assert r._cached_tensor_b is None
 
 
 def test_downscaled_rife_preserves_static_full_resolution_pixels(tmp_path):

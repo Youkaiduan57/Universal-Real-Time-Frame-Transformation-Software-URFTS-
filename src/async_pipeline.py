@@ -550,14 +550,7 @@ class AsyncFramePipeline:
         """Generate one to four ordered frames with a midpoint-only interpolator."""
 
         interpolate = self._frame_interpolator.interpolate
-        interpolate_continuous = getattr(
-            self._frame_interpolator, "interpolate_continuous", None
-        )
-        midpoint = (
-            interpolate_continuous(frame_a, frame_b)
-            if callable(interpolate_continuous)
-            else interpolate(frame_a, frame_b)
-        )
+        midpoint = interpolate(frame_a, frame_b)
         if self.generated_frames == 1:
             return [(0.5, midpoint)]
 
