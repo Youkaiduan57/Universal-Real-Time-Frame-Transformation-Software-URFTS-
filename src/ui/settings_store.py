@@ -26,6 +26,7 @@ class GuiSettings:
     advanced_visible: bool = False
     provider: str = "directml"
     device_id: int = 0
+    rife_device_id: int | None = None
     ai_tile: str = "auto"
     ai_tile_overlap: int = 16
     ai_input_width: int = 320

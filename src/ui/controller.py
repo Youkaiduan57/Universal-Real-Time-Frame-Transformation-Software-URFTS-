@@ -42,6 +42,7 @@ class RuntimeConfiguration:
     target_fps: float | None = None
     provider: str = "directml"
     device_id: int = 0
+    rife_device_id: int | None = None
     ai_tile: str = "auto"
     ai_tile_overlap: int = 16
     ai_input_width: int = 320
@@ -91,6 +92,8 @@ class RuntimeConfiguration:
             raise ValueError("Advanced numeric values must be positive.")
         if self.provider not in ("cpu", "directml") or self.device_id < 0:
             raise ValueError("Select a valid provider and non-negative device ID.")
+        if self.rife_device_id is not None and self.rife_device_id < 0:
+            raise ValueError("Select a non-negative frame-generation device ID.")
         if self.capture_backend not in ("auto", "wgc", "dxcam", "mss"):
             raise ValueError("Select a valid capture backend.")
         if self.pipeline not in ("cpu", "d3d11"):
@@ -143,6 +146,9 @@ class RuntimeConfiguration:
             queue_depth=self.queue_depth, frame_generation=self.frame_generation,
             generated_frames=self.generated_frames, warmup_seconds=self.warmup_seconds,
             rife_model=Path(self.rife_model_path),
+            rife_device_id=(
+                self.device_id if self.rife_device_id is None else self.rife_device_id
+            ),
             rife_input_width=(rife_preset["width"] if self.frame_generation == "rife" else None),
             rife_input_height=(rife_preset["height"] if self.frame_generation == "rife" else None),
             pipeline=self.pipeline, processor="ai" if self.upscaling_mode == "ai" else "shader",

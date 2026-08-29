@@ -269,6 +269,17 @@ def test_cli_accepts_nonnegative_warmup(monkeypatch) -> None:
     assert main.parse_args().warmup_seconds == pytest.approx(5.0)
 
 
+def test_cli_accepts_separate_rife_device(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["main.py", "--ai-device-id", "1", "--rife-device-id", "0"],
+    )
+    args = main.parse_args()
+    assert args.ai_device_id == 1
+    assert args.rife_device_id == 0
+
+
 def test_cli_accepts_rife_internal_resolution_and_fullscreen_preview(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,

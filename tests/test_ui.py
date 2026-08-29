@@ -329,6 +329,7 @@ def test_conditional_controls_and_preset_mapping(qt_app, tmp_path: Path) -> None
         RuntimeConfiguration(hwnd=1, target_fps=0),
         RuntimeConfiguration(hwnd=1, queue_depth=0),
         RuntimeConfiguration(hwnd=1, ai_input_width=0),
+        RuntimeConfiguration(hwnd=1, rife_device_id=-1),
     ],
 )
 def test_invalid_configuration_is_rejected(configuration) -> None:
@@ -430,6 +431,21 @@ def test_rife_respects_explicit_latency():
     args = RuntimeConfiguration(hwnd=101, frame_generation="rife",
                                 max_frame_latency_ms=75).to_engine_args()
     assert args.max_frame_latency_ms == 75
+
+
+def test_frame_generation_device_can_be_split_from_ai_device(qt_app, tmp_path):
+    window = make_window(qt_app, tmp_path)
+    window.device_id.setValue(1)
+    window.rife_device_id.setValue(0)
+
+    args = window._configuration().to_engine_args()
+
+    assert args.ai_device_id == 1
+    assert args.rife_device_id == 0
+    window.close()
+    restored = SettingsStore(tmp_path / "gui.json").load()
+    assert restored.device_id == 1
+    assert restored.rife_device_id == 0
 
 
 def test_output_refinement_is_saved_and_reaches_runtime(qt_app,tmp_path):

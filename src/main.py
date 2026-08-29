@@ -292,6 +292,15 @@ def parse_args() -> argparse.Namespace:
         help="Non-negative DirectML device ID (ignored by the CPU provider).",
     )
     parser.add_argument(
+        "--rife-device-id",
+        type=int,
+        default=None,
+        help=(
+            "Optional DirectML device used only for frame generation. "
+            "Defaults to --ai-device-id."
+        ),
+    )
+    parser.add_argument(
         "--ai-scale",
         choices=("auto", "1", "2", "3", "4"),
         default="auto",
@@ -379,6 +388,10 @@ def parse_args() -> argparse.Namespace:
         parser.error("--ai-input-width must be greater than zero.")
     if args.ai_input_height is not None and args.ai_input_height <= 0:
         parser.error("--ai-input-height must be greater than zero.")
+    if args.ai_device_id < 0:
+        parser.error("--ai-device-id must be zero or greater.")
+    if args.rife_device_id is not None and args.rife_device_id < 0:
+        parser.error("--rife-device-id must be zero or greater.")
     if args.ai_tile_size is not None and args.ai_tile_size <= 0:
         parser.error("--ai-tile-size must be greater than zero.")
     if args.ai_tile_overlap < 0:
@@ -1080,7 +1093,11 @@ def run_application(
         return _create_frame_interpolator(
             getattr(args, "frame_generation", "off"),
             provider=provider or getattr(args, "ai_provider", "cpu"),
-            device_id=getattr(args, "ai_device_id", 0),
+            device_id=(
+                getattr(args, "rife_device_id", None)
+                if getattr(args, "rife_device_id", None) is not None
+                else getattr(args, "ai_device_id", 0)
+            ),
             inference_width=getattr(args, "rife_input_width", None),
             inference_height=getattr(args, "rife_input_height", None),
             model_path=getattr(args, "rife_model", None),
@@ -1133,6 +1150,13 @@ def run_application(
         )
     if frame_interpolator is not None:
         logger.info("Selected RIFE model: %s", getattr(args, "rife_model", None) or DEFAULT_RIFE_MODEL_PATH)
+        if getattr(args, "ai_provider", "cpu") == "directml":
+            logger.info(
+                "Requested frame-generation DirectML device: %s",
+                getattr(args, "rife_device_id", None)
+                if getattr(args, "rife_device_id", None) is not None
+                else getattr(args, "ai_device_id", 0),
+            )
         logger.info(
             "Active frame generation: %s (%s)",
             getattr(args, "frame_generation", "off").upper(),

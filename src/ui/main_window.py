@@ -258,7 +258,10 @@ class MainWindow(QMainWindow):
         self.rife_provider_row = card.add_row(SettingsRow("Provider", self.rife_provider_combo))
         self.rife_device_id = QSpinBox()
         self.rife_device_id.setRange(0, 64)
-        self.rife_device_id.setToolTip("DirectML adapter index; this may differ from Task Manager GPU numbers.")
+        self.rife_device_id.setToolTip(
+            "DirectML adapter used only for frame generation. On dual-GPU laptops, "
+            "try the iGPU here to leave the game GPU free."
+        )
         self.rife_device_id.setAccessibleName("Frame generation device")
         self.rife_device_row = card.add_row(SettingsRow("Device", self.rife_device_id))
         self.generated_frames_combo = _combo(
@@ -374,7 +377,10 @@ class MainWindow(QMainWindow):
         self.provider_row = card.add_row(SettingsRow("Provider", self.provider_combo))
         self.device_id = QSpinBox()
         self.device_id.setRange(0, 64)
-        self.device_id.setToolTip("DirectML adapter index; this may differ from Task Manager GPU numbers.")
+        self.device_id.setToolTip(
+            "DirectML adapter used for AI upscaling; independent from the "
+            "frame-generation device."
+        )
         self.device_row = card.add_row(SettingsRow("Device", self.device_id))
         self.ai_scale_combo = _combo(
             (("auto", "Auto"), ("1", "×1"), ("2", "×2"), ("3", "×3"), ("4", "×4")),
@@ -619,8 +625,8 @@ class MainWindow(QMainWindow):
         self.rife_pacing_combo.currentIndexChanged.connect(lambda _index: self._pacing_changed(self.rife_pacing_combo))
         self.provider_combo.currentIndexChanged.connect(lambda _index: self._provider_changed(self.provider_combo))
         self.rife_provider_combo.currentIndexChanged.connect(lambda _index: self._provider_changed(self.rife_provider_combo))
-        self.device_id.valueChanged.connect(lambda value: self._device_changed(self.device_id, value))
-        self.rife_device_id.valueChanged.connect(lambda value: self._device_changed(self.rife_device_id, value))
+        self.device_id.valueChanged.connect(self._device_changed)
+        self.rife_device_id.valueChanged.connect(self._device_changed)
         self.model_combo.currentIndexChanged.connect(self._model_changed)
         self.browse_model_button.clicked.connect(self._browse_model)
         for widget in (
@@ -684,7 +690,11 @@ class MainWindow(QMainWindow):
         self._set_combo(self.rife_provider_combo, self.settings.provider)
         self._set_combo(self.default_provider_combo, self.settings.provider)
         self.device_id.setValue(self.settings.device_id)
-        self.rife_device_id.setValue(self.settings.device_id)
+        self.rife_device_id.setValue(
+            self.settings.device_id
+            if self.settings.rife_device_id is None
+            else self.settings.rife_device_id
+        )
         self._restore_model_selection()
         self._set_combo(self.ai_scale_combo, self.settings.ai_scale)
         self._set_combo(self.ai_input_layout_combo, self.settings.ai_input_layout)
@@ -771,6 +781,7 @@ class MainWindow(QMainWindow):
         self.settings.custom_fps = self.custom_fps.value()
         self.settings.provider = str(self.provider_combo.currentData() or "directml")
         self.settings.device_id = self.device_id.value()
+        self.settings.rife_device_id = self.rife_device_id.value()
         self.settings.ai_tile = str(self.tile_combo.currentData() or "auto")
         self.settings.ai_tile_overlap = self.tile_overlap.value()
         self.settings.ai_input_width = self.ai_width.value()
@@ -957,13 +968,9 @@ class MainWindow(QMainWindow):
         self._update_visibility()
         self._settings_changed()
 
-    def _device_changed(self, source: QSpinBox, value: int) -> None:
+    def _device_changed(self, _value: int) -> None:
         if self._loading:
             return
-        target = self.device_id if source is self.rife_device_id else self.rife_device_id
-        target.blockSignals(True)
-        target.setValue(value)
-        target.blockSignals(False)
         self._settings_changed()
 
     def _model_changed(self, _index: int) -> None:
@@ -1167,6 +1174,7 @@ class MainWindow(QMainWindow):
             target_fps=target,
             provider=str(self.provider_combo.currentData()),
             device_id=self.device_id.value(),
+            rife_device_id=self.rife_device_id.value(),
             ai_tile=str(self.tile_combo.currentData()),
             ai_tile_overlap=self.tile_overlap.value(),
             ai_input_width=self.ai_width.value(),

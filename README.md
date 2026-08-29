@@ -67,6 +67,11 @@ On the first packaged-app run, UniversalUpscaler benchmarks the local CPU and Op
 
 Frame generation limits its internal inference resolution according to the selected preset: Performance 160x90, Fast Quality 240x135, Balanced 320x180, and Quality 640x360. Generated frames are restored to the presentation size. RIFE v3.6 is the default; IFRNet-S Vimeo90K and RIFE 4.25 Lite are experimental GUI options. Higher generation amounts use recursive interpolation and require additional inference work.
 
+AI upscaling and frame generation have independent DirectML device controls. On
+dual-GPU laptops, this permits the game and optional AI upscaler to remain on the
+discrete GPU while interpolation runs on the integrated GPU. The CLI equivalent
+is `--ai-device-id 1 --rife-device-id 0`; actual adapter ordering is system-specific.
+
 ## Feature status
 
 - Confirmed working: WGC capture, CPU spatial upscaling, ONNX AI processing, RIFE interpolation, and the shader runtime tested with AssaultCube and Portal 2.
