@@ -206,6 +206,14 @@ class RIFEInterpolator(FrameInterpolator):
         self.last_stabilized_fraction = 0.0
         self.last_interpolation_confidence = 1.0
         self.last_duplicate_bypass = False
+        # These arrays are private scratch space used only during the synchronous
+        # interpolate call. Reusing them avoids allocating and clearing several
+        # megabytes for every generated frame, which otherwise competes with
+        # capture and presentation under live GPU load.
+        self._inference_frame_buffers: tuple[np.ndarray, np.ndarray] | None = None
+        self._input_tensor_buffers: tuple[np.ndarray, np.ndarray] | None = None
+        self._full_midpoint_buffer: np.ndarray | None = None
+        self._full_fallback_buffer: np.ndarray | None = None
         self._validation_session_lease = ResourceLease("onnx_sessions")
 
     @property
@@ -544,6 +552,89 @@ class RIFEInterpolator(FrameInterpolator):
             interpolation=cv2.INTER_AREA,
         )
 
+    def _resize_pair_for_inference(
+        self,
+        frame_a: np.ndarray,
+        frame_b: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Downscale an endpoint pair into reusable, independent buffers."""
+        if self.inference_width is None or self.inference_height is None:
+            return frame_a, frame_b
+        height, width = frame_a.shape[:2]
+        scale = min(
+            1.0,
+            self.inference_width / width,
+            self.inference_height / height,
+        )
+        if scale >= 1.0:
+            return frame_a, frame_b
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        shape = (resized_height, resized_width, 3)
+        buffers = self._inference_frame_buffers
+        if buffers is None or buffers[0].shape != shape:
+            buffers = (
+                np.empty(shape, dtype=np.uint8),
+                np.empty(shape, dtype=np.uint8),
+            )
+            self._inference_frame_buffers = buffers
+        cv2.resize(
+            frame_a,
+            (resized_width, resized_height),
+            dst=buffers[0],
+            interpolation=cv2.INTER_AREA,
+        )
+        cv2.resize(
+            frame_b,
+            (resized_width, resized_height),
+            dst=buffers[1],
+            interpolation=cv2.INTER_AREA,
+        )
+        return buffers
+
+    def _prepare_input_pair(
+        self,
+        frame_a: np.ndarray,
+        frame_b: np.ndarray,
+        padded_height: int,
+        padded_width: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Convert BGR endpoints directly into reusable model tensors."""
+        if self.input_layout == "nchw":
+            shape = (1, 3, padded_height, padded_width)
+        else:
+            shape = (1, padded_height, padded_width, 3)
+        buffers = self._input_tensor_buffers
+        if buffers is None or buffers[0].shape != shape:
+            buffers = (
+                np.zeros(shape, dtype=np.float32),
+                np.zeros(shape, dtype=np.float32),
+            )
+            self._input_tensor_buffers = buffers
+        height, width = frame_a.shape[:2]
+        scale = np.float32(1.0 / 255.0)
+        for frame, tensor in zip((frame_a, frame_b), buffers):
+            # Clear only when padding exists; every active image pixel is
+            # overwritten below.
+            if height != padded_height or width != padded_width:
+                tensor.fill(0.0)
+            if self.input_layout == "nchw":
+                np.multiply(
+                    frame[..., 2], scale, out=tensor[0, 0, :height, :width]
+                )
+                np.multiply(
+                    frame[..., 1], scale, out=tensor[0, 1, :height, :width]
+                )
+                np.multiply(
+                    frame[..., 0], scale, out=tensor[0, 2, :height, :width]
+                )
+            else:
+                destination = tensor[0, :height, :width]
+                np.multiply(frame[..., 2], scale, out=destination[..., 0])
+                np.multiply(frame[..., 1], scale, out=destination[..., 1])
+                np.multiply(frame[..., 0], scale, out=destination[..., 2])
+        return buffers
+
     def _prepare_output(
         self,
         value: object,
@@ -694,8 +785,9 @@ class RIFEInterpolator(FrameInterpolator):
         total_start = time.perf_counter()
         original_height, original_width = frame_a.shape[:2]
         preprocessing_start = time.perf_counter()
-        inference_frame_a = self._resize_for_inference(frame_a)
-        inference_frame_b = self._resize_for_inference(frame_b)
+        inference_frame_a, inference_frame_b = self._resize_pair_for_inference(
+            frame_a, frame_b
+        )
         if self.temporal_stabilization:
             # Reuse the already downscaled inference inputs for motion analysis.
             # An extra pair of full-resolution AREA resizes cost several ms per
@@ -745,11 +837,11 @@ class RIFEInterpolator(FrameInterpolator):
         inference_height, inference_width = inference_frame_a.shape[:2]
         padded_height = ((inference_height + self._input_alignment - 1) // self._input_alignment) * self._input_alignment
         padded_width = ((inference_width + self._input_alignment - 1) // self._input_alignment) * self._input_alignment
-        tensor_a = self._prepare_input(
-            inference_frame_a, padded_height, padded_width
-        )
-        tensor_b = self._prepare_input(
-            inference_frame_b, padded_height, padded_width
+        tensor_a, tensor_b = self._prepare_input_pair(
+            inference_frame_a,
+            inference_frame_b,
+            padded_height,
+            padded_width,
         )
         self._validate_runtime_shape(
             tensor_a.shape,
@@ -816,10 +908,30 @@ class RIFEInterpolator(FrameInterpolator):
             # Reconstruct uncertain regions from the original-resolution real
             # endpoints. This avoids the visible sharp/soft alternation caused
             # by enlarging every generated pixel from the small model input.
-            full_midpoint = cv2.addWeighted(frame_a, 0.5, frame_b, 0.5, 0.0)
+            if (
+                self._full_midpoint_buffer is None
+                or self._full_midpoint_buffer.shape != frame_a.shape
+            ):
+                self._full_midpoint_buffer = np.empty_like(frame_a)
+            if (
+                self._full_fallback_buffer is None
+                or self._full_fallback_buffer.shape != frame_a.shape[:2]
+            ):
+                self._full_fallback_buffer = np.empty(
+                    frame_a.shape[:2], dtype=np.uint8
+                )
+            full_midpoint = cv2.addWeighted(
+                frame_a,
+                0.5,
+                frame_b,
+                0.5,
+                0.0,
+                dst=self._full_midpoint_buffer,
+            )
             full_fallback = cv2.resize(
                 fallback_mask,
                 (original_width, original_height),
+                dst=self._full_fallback_buffer,
                 interpolation=cv2.INTER_NEAREST,
             )
             cv2.copyTo(full_midpoint, full_fallback, output)
@@ -868,4 +980,8 @@ class RIFEInterpolator(FrameInterpolator):
         self.output_dimensions = None
         self.last_stabilized_fraction = 0.0
         self.last_interpolation_confidence = 1.0
+        self._inference_frame_buffers = None
+        self._input_tensor_buffers = None
+        self._full_midpoint_buffer = None
+        self._full_fallback_buffer = None
         self.last_duplicate_bypass = False

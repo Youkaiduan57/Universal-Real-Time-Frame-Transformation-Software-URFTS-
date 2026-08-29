@@ -167,6 +167,59 @@ def test_rife_interpolates_matching_frames_after_initialization(
     assert interpolator.last_inference_ms is not None
 
 
+@pytest.mark.parametrize("layout", ["nchw", "nhwc"])
+def test_reusable_input_pair_matches_reference_conversion(layout):
+    interpolator = RIFEInterpolator(input_layout=layout)
+    rng = np.random.default_rng(42)
+    frame_a = rng.integers(0, 256, (13, 17, 3), dtype=np.uint8)
+    frame_b = rng.integers(0, 256, (13, 17, 3), dtype=np.uint8)
+
+    tensor_a, tensor_b = interpolator._prepare_input_pair(
+        frame_a, frame_b, padded_height=16, padded_width=32
+    )
+
+    np.testing.assert_allclose(
+        tensor_a,
+        interpolator._prepare_input(frame_a, 16, 32),
+        rtol=0.0,
+        atol=np.finfo(np.float32).eps,
+    )
+    np.testing.assert_allclose(
+        tensor_b,
+        interpolator._prepare_input(frame_b, 16, 32),
+        rtol=0.0,
+        atol=np.finfo(np.float32).eps,
+    )
+    assert tensor_a.flags.c_contiguous
+    assert tensor_b.flags.c_contiguous
+
+
+def test_frame_stage_scratch_buffers_are_reused_and_cleared_on_shutdown():
+    interpolator = RIFEInterpolator(inference_width=16, inference_height=9)
+    frame_a = np.zeros((72, 128, 3), dtype=np.uint8)
+    frame_b = np.full_like(frame_a, 255)
+
+    resized_a, resized_b = interpolator._resize_pair_for_inference(frame_a, frame_b)
+    tensor_a, tensor_b = interpolator._prepare_input_pair(
+        resized_a, resized_b, padded_height=32, padded_width=32
+    )
+    first_ids = tuple(map(id, (resized_a, resized_b, tensor_a, tensor_b)))
+
+    resized_a, resized_b = interpolator._resize_pair_for_inference(frame_b, frame_a)
+    tensor_a, tensor_b = interpolator._prepare_input_pair(
+        resized_a, resized_b, padded_height=32, padded_width=32
+    )
+    assert tuple(map(id, (resized_a, resized_b, tensor_a, tensor_b))) == first_ids
+    assert np.all(tensor_a[:, :, 9:, :] == 0.0)
+    assert np.all(tensor_b[:, :, 9:, :] == 0.0)
+
+    interpolator.shutdown()
+    assert interpolator._inference_frame_buffers is None
+    assert interpolator._input_tensor_buffers is None
+    assert interpolator._full_midpoint_buffer is None
+    assert interpolator._full_fallback_buffer is None
+
+
 def test_rife_warmup_compiles_configured_internal_resolution(
     monkeypatch,
     tmp_path: Path,
