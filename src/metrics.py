@@ -308,7 +308,7 @@ class PerformanceMetrics:
             "p95 frame %.2f ms, dropped frames %s, pacing error %.2f ms, "
             "scheduled %.6f, actual %.6f, late %s, generated-late drops %s, "
             "real-late drops %s, source %.2f FPS, presentation %.2f FPS, state %s, "
-            "stages capture %.2f ms, processing %.2f ms, RIFE %.2f ms, "
+            "stages capture %.2f ms, processing %.2f ms, interpolation %.2f ms, "
             "retries %s, recoveries %s, recovery failures %s, fallbacks %s.",
             snapshot.sample_count,
             snapshot.fps,

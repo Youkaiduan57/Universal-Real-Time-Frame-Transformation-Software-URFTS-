@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 import logging
+import math
 import threading
 import time
 import traceback
@@ -173,6 +174,8 @@ class AsyncFramePipeline:
         frame_interpolator: Any | None = None,
         generated_frames: int = 1,
         queue_depth: int = 2,
+        presentation_buffer_ms: float = 0.0,
+        presentation_target_fps: float | None = None,
         collect_telemetry: bool = False,
         clock: Callable[[], float] = time.perf_counter,
         worker_name: str = "frame-processing-worker",
@@ -186,6 +189,16 @@ class AsyncFramePipeline:
             raise TypeError("Generated frame count must be an integer.")
         if not 1 <= generated_frames <= 4:
             raise ValueError("Generated frame count must be between 1 and 4.")
+        if (
+            not math.isfinite(float(presentation_buffer_ms))
+            or not 0.0 <= float(presentation_buffer_ms) <= 2000.0
+        ):
+            raise ValueError("Presentation buffer must be between 0 and 2000 ms.")
+        if presentation_target_fps is not None and (
+            not math.isfinite(float(presentation_target_fps))
+            or float(presentation_target_fps) <= 0.0
+        ):
+            raise ValueError("Presentation target FPS must be positive and finite.")
         self._processor = processor
         self._capture_source = capture_source
         self._capture_shutdown = capture_shutdown
@@ -195,11 +208,24 @@ class AsyncFramePipeline:
         self._previous_processed_image: Any | None = None
         self._collect_telemetry = bool(collect_telemetry)
         self._clock = clock
+        self.presentation_buffer_ms = float(presentation_buffer_ms)
+        self._presentation_buffer_seconds = self.presentation_buffer_ms / 1000.0
+        # Capacity is measured in processed source batches, not displayed frames.
+        # The stationary shortcut can publish source batches near the capture rate,
+        # even when generated_frames > 0. Dividing the target by the batch size made
+        # the queue evict its oldest batch before it became eligible, permanently
+        # starving longer presentation buffers.
+        assumed_source_fps = max(60.0, float(presentation_target_fps or 60.0))
+        self._buffered_batch_capacity = max(
+            2,
+            math.ceil(self._presentation_buffer_seconds * assumed_source_fps) + 2,
+        )
         self._input = LatestFrameHandoff(queue_depth)
         self._result_condition = threading.Condition()
         self._state_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._presentation_results: deque[ProcessedFrame] = deque()
+        self._buffered_batches: deque[list[ProcessedFrame]] = deque()
         self._failure: WorkerFailure | None = None
         self._next_sequence_id = 0
         self._submitted_frames = 0
@@ -292,7 +318,9 @@ class AsyncFramePipeline:
         """Return an atomic-enough validation snapshot of bounded queue sizes."""
 
         with self._result_condition:
-            output_count = len(self._presentation_results)
+            output_count = len(self._presentation_results) + sum(
+                len(batch) for batch in self._buffered_batches
+            )
         return QueueSizes(input=self._input.pending_count, output=output_count)
 
     def start(self) -> None:
@@ -377,6 +405,39 @@ class AsyncFramePipeline:
     ) -> list[ProcessedFrame]:
         """Consume one complete ordered presentation batch without polling."""
 
+        if self._presentation_buffer_seconds > 0.0:
+            deadline = None if timeout is None else self._clock() + max(0.0, timeout)
+            with self._result_condition:
+                while True:
+                    if self._buffered_batches:
+                        batch = self._buffered_batches[0]
+                        eligible_at = (
+                            batch[-1].captured_at + self._presentation_buffer_seconds
+                        )
+                        remaining_delay = eligible_at - self._clock()
+                        if remaining_delay <= 0.0:
+                            return self._buffered_batches.popleft()
+                    else:
+                        remaining_delay = None
+
+                    if self._failure is not None or self._processing_finished:
+                        return []
+                    if timeout == 0.0:
+                        return []
+                    remaining_timeout = (
+                        None if deadline is None else deadline - self._clock()
+                    )
+                    if remaining_timeout is not None and remaining_timeout <= 0.0:
+                        return []
+                    wait_for = remaining_timeout
+                    if remaining_delay is not None:
+                        wait_for = (
+                            remaining_delay
+                            if wait_for is None
+                            else min(wait_for, remaining_delay)
+                        )
+                    self._result_condition.wait(timeout=wait_for)
+
         first = self.take_latest(timeout=timeout)
         if first is None:
             return []
@@ -393,14 +454,24 @@ class AsyncFramePipeline:
 
         cleared = self._input.clear()
         with self._result_condition:
-            result_count = len(self._presentation_results)
-            if result_count:
-                self._result_replacements += result_count
+            immediate_count = len(self._presentation_results)
+            buffered_count = sum(len(batch) for batch in self._buffered_batches)
+            result_count = immediate_count + buffered_count
+            if immediate_count:
+                self._result_replacements += immediate_count
                 self._dropped_generated_frames += sum(
                     result.frame_kind == "generated"
                     for result in self._presentation_results
                 )
                 self._presentation_results.clear()
+            if self._buffered_batches:
+                self._result_replacements += buffered_count
+                self._dropped_generated_frames += sum(
+                    frame.frame_kind == "generated"
+                    for batch in self._buffered_batches
+                    for frame in batch
+                )
+                self._buffered_batches.clear()
             self._previous_processed_image = None
             self._result_condition.notify_all()
         return cleared + result_count
@@ -572,6 +643,16 @@ class AsyncFramePipeline:
         """Atomically replace stale output with one newest ordered presentation batch."""
 
         with self._result_condition:
+            if self._presentation_buffer_seconds > 0.0:
+                self._buffered_batches.append(results)
+                while len(self._buffered_batches) > self._buffered_batch_capacity:
+                    dropped = self._buffered_batches.popleft()
+                    self._result_replacements += len(dropped)
+                    self._dropped_generated_frames += sum(
+                        result.frame_kind == "generated" for result in dropped
+                    )
+                self._result_condition.notify_all()
+                return
             if self._presentation_results:
                 self._result_replacements += len(self._presentation_results)
                 self._dropped_generated_frames += sum(

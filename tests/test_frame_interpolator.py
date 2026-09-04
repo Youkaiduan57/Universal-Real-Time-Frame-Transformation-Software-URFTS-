@@ -651,6 +651,23 @@ def test_confidence_compositor_matches_small_generated_colour_shift():
     assert 0.4 < fallback_fraction < 0.6
 
 
+def test_ui_stabilization_protects_persistent_high_contrast_edges():
+    a = np.zeros((32, 32, 3), dtype=np.uint8)
+    b = np.zeros_like(a)
+    a[8:24, 12:20] = 255
+    b[8:24, 12:20] = 240
+    generated = cv2.addWeighted(a, 0.5, b, 0.5, 0.0)
+
+    _without_ui, fraction_without, _ = RIFEInterpolator._confidence_composite(
+        generated.copy(), a, b, ui_stabilization=False
+    )
+    _with_ui, fraction_with, mask = RIFEInterpolator._confidence_composite(
+        generated.copy(), a, b, ui_stabilization=True
+    )
+
+    assert cv2.countNonZero(mask) > 0
+    assert fraction_with > fraction_without
+
 def test_temporal_stabilization_runs_before_full_resolution_resize(
     monkeypatch, tmp_path
 ):
@@ -668,9 +685,9 @@ def test_temporal_stabilization_runs_before_full_resolution_resize(
     motion_shapes = []
     composite = RIFEInterpolator._confidence_composite
 
-    def record_shape(output, frame_a, frame_b):
+    def record_shape(output, frame_a, frame_b, **kwargs):
         observed_shapes.append((output.shape, frame_a.shape, frame_b.shape))
-        return composite(output, frame_a, frame_b)
+        return composite(output, frame_a, frame_b, **kwargs)
 
     monkeypatch.setattr(
         RIFEInterpolator, "_confidence_composite", staticmethod(record_shape)

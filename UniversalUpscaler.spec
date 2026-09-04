@@ -37,6 +37,10 @@ binaries = []
 for package in ("onnxruntime", "cv2", "dxcam"):
     binaries += collect_dynamic_libs(package)
 
+native_bridge = src_root / "_urfts_directml.pyd"
+if native_bridge.is_file():
+    binaries.append((str(native_bridge), "."))
+
 for package in ("dxcam", "mss", "comtypes"):
     datas += collect_data_files(package)
 

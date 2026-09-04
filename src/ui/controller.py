@@ -12,6 +12,7 @@ from typing import Callable
 from PySide6.QtCore import QObject, Signal, Slot
 
 import main as engine_main
+from frame_generation_runtime import probe_gpu_resident_backend
 from resource_paths import resource_path
 
 
@@ -49,11 +50,13 @@ class RuntimeConfiguration:
     ai_input_height: int = 180
     frame_pacing: str = "auto"
     max_frame_latency_ms: float = 100.0
+    presentation_buffer_ms: float = 0.0
     queue_depth: int = 2
     allow_provider_fallback: bool = False
     show_performance_overlay: bool = True
     output_refinement: float = 0.0
     temporal_stabilization: bool = True
+    ui_stabilization: bool = True
     model_path: Path = SRVGG_MODEL
     ai_scale: str = "2"
     ai_input_layout: str = "nchw"
@@ -70,6 +73,8 @@ class RuntimeConfiguration:
             raise ValueError("Output refinement must be between 0 and 0.25.")
         if not isinstance(self.temporal_stabilization, bool):
             raise ValueError("Temporal stabilization must be enabled or disabled.")
+        if not isinstance(self.ui_stabilization, bool):
+            raise ValueError("UI stabilization must be enabled or disabled.")
         if self.hwnd <= 0:
             raise ValueError("Select an open target window.")
         if self.upscaling_mode not in ("off", "shader", "ai"):
@@ -90,10 +95,12 @@ class RuntimeConfiguration:
             raise ValueError("AI internal dimensions must be positive.")
         if self.ai_tile_overlap < 0 or self.queue_depth <= 0 or self.max_frame_latency_ms <= 0:
             raise ValueError("Advanced numeric values must be positive.")
+        if self.presentation_buffer_ms not in (0.0, 250.0, 500.0, 1000.0, 2000.0):
+            raise ValueError("Select a valid presentation buffer duration.")
         if self.provider not in ("cpu", "directml") or self.device_id < 0:
             raise ValueError("Select a valid provider and non-negative device ID.")
-        if self.rife_device_id is not None and self.rife_device_id < 0:
-            raise ValueError("Select a non-negative frame-generation device ID.")
+        if self.rife_device_id is not None and self.rife_device_id < -1:
+            raise ValueError("Select Auto or a non-negative frame-generation device ID.")
         if self.capture_backend not in ("auto", "wgc", "dxcam", "mss"):
             raise ValueError("Select a valid capture backend.")
         if self.pipeline not in ("cpu", "d3d11"):
@@ -122,7 +129,12 @@ class RuntimeConfiguration:
             if self.upscaling_mode != "shader":
                 raise ValueError("The D3D11 pipeline requires Shader upscaling.")
             if self.frame_generation != "off":
-                raise ValueError("Frame generation requires the CPU-frame pipeline.")
+                capability = probe_gpu_resident_backend()
+                if not capability.available:
+                    raise ValueError(
+                        "GPU-resident frame generation requires the native DirectML "
+                        f"texture bridge. {capability.reason}"
+                    )
             if self.capture_backend not in ("auto", "wgc"):
                 raise ValueError("The D3D11 pipeline requires Auto or WGC capture.")
             if self.upscaling_method == "bicubic":
@@ -143,6 +155,7 @@ class RuntimeConfiguration:
             draw_preview_overlay=self.show_performance_overlay,
             output_refinement=self.output_refinement,
             temporal_stabilization=self.temporal_stabilization,
+            ui_stabilization=self.ui_stabilization,
             queue_depth=self.queue_depth, frame_generation=self.frame_generation,
             generated_frames=self.generated_frames, warmup_seconds=self.warmup_seconds,
             rife_model=Path(self.rife_model_path),
@@ -167,6 +180,7 @@ class RuntimeConfiguration:
             fsr1_like_edge_strength=self.fsr1_like_edge_strength, target_fps=self.target_fps,
             frame_pacing=self.frame_pacing,
             max_frame_latency_ms=effective_latency,
+            presentation_buffer_ms=self.presentation_buffer_ms,
             allow_provider_fallback=self.allow_provider_fallback,
             persist_runtime_profile=True,
             keep_latest_real=True,

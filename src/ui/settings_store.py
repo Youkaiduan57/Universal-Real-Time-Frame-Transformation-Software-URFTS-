@@ -33,11 +33,13 @@ class GuiSettings:
     ai_input_height: int = 180
     frame_pacing: str = "auto"
     max_frame_latency_ms: float = 100.0
+    presentation_buffer_ms: float = 0.0
     queue_depth: int = 2
     allow_provider_fallback: bool = False
     show_performance_overlay: bool = True
     output_refinement: float = 0.0
     temporal_stabilization: bool = True
+    ui_stabilization: bool = True
     ai_model_path: str = ""
     ai_scale: str = "2"
     ai_input_layout: str = "nchw"

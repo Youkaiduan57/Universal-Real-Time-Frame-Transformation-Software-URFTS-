@@ -18,7 +18,7 @@ import statistics
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from config import (
     FSR1_LIKE_DEFAULT_EDGE_STRENGTH,
@@ -171,6 +171,7 @@ class GpuPipelineMetrics:
 
     def __init__(self) -> None:
         self.started_at = time.perf_counter()
+        self.presented_frames = 0
         self.acquisition_ms: list[float] = []
         self.scale_submit_ms: list[float] = []
         self.present_submit_ms: list[float] = []
@@ -189,7 +190,9 @@ class GpuPipelineMetrics:
         cpu_loop_ms: float,
         source_size: tuple[int, int],
         output_size: tuple[int, int],
+        presented_count: int = 1,
     ) -> None:
+        self.presented_frames += max(0, int(presented_count))
         self.acquisition_ms.append(acquisition_ms)
         self.scale_submit_ms.append(scale_submit_ms)
         self.present_submit_ms.append(present_submit_ms)
@@ -206,7 +209,7 @@ class GpuPipelineMetrics:
     ) -> GpuPipelineReport:
         finish = time.perf_counter() if ended_at is None else ended_at
         duration = max(0.0, finish - self.started_at)
-        count = len(self.cpu_loop_ms)
+        count = self.presented_frames
         return GpuPipelineReport(
             duration_seconds=duration,
             presented_frames=count,
@@ -1206,6 +1209,7 @@ class D3D11GpuPipeline:
         fsr1_like_sharpening_strength: float = FSR1_LIKE_DEFAULT_SHARPENING_STRENGTH,
         fsr1_like_sharpening_enabled: bool = FSR1_LIKE_DEFAULT_SHARPENING_ENABLED,
         frame_pacer: Any | None = None,
+        frame_generator_factory: Callable[[ctypes.c_void_p], Any] | None = None,
     ) -> None:
         validate_gpu_pipeline_request(
             capture_backend="wgc",
@@ -1220,6 +1224,7 @@ class D3D11GpuPipeline:
         self.adapter_description = "Unknown DXGI adapter"
         self.method = method
         self.frame_pacer = frame_pacer
+        self.frame_generator = None
         self._closed = False
         self._validation_resource_lease = ResourceLease("d3d_resources")
         try:
@@ -1227,6 +1232,8 @@ class D3D11GpuPipeline:
             device = self.capture.d3d11_device_pointer
             context = self.capture.d3d11_context_pointer
             self.adapter_description = describe_dxgi_adapter(device)
+            if frame_generator_factory is not None:
+                self.frame_generator = frame_generator_factory(device)
             self.scaling_pass = D3D11ScalingPass(
                 device,
                 context,
@@ -1261,6 +1268,8 @@ class D3D11GpuPipeline:
         )
         logger.info("Press Q in the D3D11 presentation window or Ctrl+C to quit.")
         logger.info("GPU timestamp queries: not implemented; metrics are CPU-side only.")
+        if self.frame_generator is not None:
+            logger.info("Active frame generation: DirectML GPU-resident texture path")
 
     @property
     def scaler(self) -> D3D11ScalingPass | None:
@@ -1297,80 +1306,107 @@ class D3D11GpuPipeline:
         )
         next_log = run_started + 1.0
 
-        while not self.presenter.quit_requested:
-            self.presenter.pump_messages()
-            if self.presenter.quit_requested:
-                break
-            self.presenter.apply_pending_resize()
-            if stop_at is not None and time.perf_counter() >= stop_at:
-                break
+        previous_frame: D3D11Frame | None = None
+        try:
+            while not self.presenter.quit_requested:
+                self.presenter.pump_messages()
+                if self.presenter.quit_requested:
+                    break
+                self.presenter.apply_pending_resize()
+                if stop_at is not None and time.perf_counter() >= stop_at:
+                    break
 
-            loop_start = time.perf_counter()
-            acquisition_start = loop_start
-            frame = self.capture.grab_gpu_frame()
-            acquisition_end = time.perf_counter()
-            try:
-                scale_start = acquisition_end
-                output_width, output_height = self.presenter.output_size
-                self.scaling_pass.execute(
-                    frame,
-                    render_target_view=self.presenter.render_target_view,
-                    output_width=output_width,
-                    output_height=output_height,
-                )
-                scale_end = time.perf_counter()
-                if self.frame_pacer is not None:
-                    pacing = self.frame_pacer.pace_batch(
-                        [
-                            PresentationFrame(
-                                frame,
-                                acquisition_start,
-                                "real",
-                            )
-                        ]
-                    )[0]
-                    if not pacing.present:
-                        continue
-                present_start = time.perf_counter()
-                self.presenter.present()
-                present_end = time.perf_counter()
-            finally:
-                frame.close()
+                loop_start = time.perf_counter()
+                acquisition_start = loop_start
+                frame = self.capture.grab_gpu_frame()
+                acquisition_end = time.perf_counter()
+                generated_frame = None
+                presentation_frames = [(frame, "real")]
+                presented_count = 0
+                try:
+                    if self.frame_generator is not None and previous_frame is not None:
+                        generated_frame = self.frame_generator.interpolate(previous_frame, frame)
+                        presentation_frames.insert(0, (generated_frame, "generated"))
+                    if previous_frame is not None:
+                        previous_frame.close()
+                        previous_frame = None
 
-            if present_end >= collect_after:
-                metrics.record(
-                    acquisition_ms=(acquisition_end - acquisition_start) * 1000.0,
-                    scale_submit_ms=(scale_end - scale_start) * 1000.0,
-                    present_submit_ms=(present_end - present_start) * 1000.0,
-                    cpu_loop_ms=(present_end - loop_start) * 1000.0,
-                    source_size=(frame.width, frame.height),
-                    output_size=self.presenter.output_size,
-                )
+                    pacing_frames = [
+                        PresentationFrame(item, acquisition_start, kind)
+                        for item, kind in presentation_frames
+                    ]
+                    decisions = (
+                        self.frame_pacer.iter_pace_batch(pacing_frames)
+                        if self.frame_pacer is not None
+                        else (
+                            type("ImmediateDecision", (), {"present": True, "frame": item})()
+                            for item in pacing_frames
+                        )
+                    )
+                    scale_start = acquisition_end
+                    present_start = scale_start
+                    present_end = scale_start
+                    for pacing in decisions:
+                        if not pacing.present:
+                            continue
+                        output_width, output_height = self.presenter.output_size
+                        self.scaling_pass.execute(
+                            pacing.frame.payload,
+                            render_target_view=self.presenter.render_target_view,
+                            output_width=output_width,
+                            output_height=output_height,
+                        )
+                        present_start = time.perf_counter()
+                        self.presenter.present()
+                        presented_count += 1
+                        present_end = time.perf_counter()
+                    scale_end = present_start
+                finally:
+                    if generated_frame is not None:
+                        generated_frame.close()
+                    if self.frame_generator is not None:
+                        previous_frame = frame
+                    else:
+                        frame.close()
 
-            now = time.perf_counter()
-            if now >= next_log and metrics.cpu_loop_ms:
-                report = metrics.report(
-                    adapter_description=self.adapter_description,
-                    replaced_frames=self.capture.gpu_replaced_frames,
-                    ended_at=now,
-                )
-                logger.info(
-                    "D3D11 GPU | WGC %sx%s -> %sx%s | %s | %.1f FPS | "
-                    "acquire %.2f ms | scale submit %.2f ms | present call %.2f ms | "
-                    "loop %.2f ms | replaced %s",
-                    report.source_width,
-                    report.source_height,
-                    report.output_width,
-                    report.output_height,
-                    self.method,
-                    report.presented_fps,
-                    report.acquisition.average_ms,
-                    report.scale_submit.average_ms,
-                    report.present_submit.average_ms,
-                    report.cpu_loop.average_ms,
-                    report.replaced_frames,
-                )
-                next_log = now + 1.0
+                if present_end >= collect_after:
+                    metrics.record(
+                        acquisition_ms=(acquisition_end - acquisition_start) * 1000.0,
+                        scale_submit_ms=(scale_end - scale_start) * 1000.0,
+                        present_submit_ms=(present_end - present_start) * 1000.0,
+                        cpu_loop_ms=(present_end - loop_start) * 1000.0,
+                        source_size=(frame.width, frame.height),
+                        output_size=self.presenter.output_size,
+                        presented_count=presented_count,
+                    )
+
+                now = time.perf_counter()
+                if now >= next_log and metrics.cpu_loop_ms:
+                    report = metrics.report(
+                        adapter_description=self.adapter_description,
+                        replaced_frames=self.capture.gpu_replaced_frames,
+                        ended_at=now,
+                    )
+                    logger.info(
+                        "D3D11 GPU | WGC %sx%s -> %sx%s | %s | %.1f FPS | "
+                        "acquire %.2f ms | scale submit %.2f ms | present call %.2f ms | "
+                        "loop %.2f ms | replaced %s",
+                        report.source_width,
+                        report.source_height,
+                        report.output_width,
+                        report.output_height,
+                        self.method,
+                        report.presented_fps,
+                        report.acquisition.average_ms,
+                        report.scale_submit.average_ms,
+                        report.present_submit.average_ms,
+                        report.cpu_loop.average_ms,
+                        report.replaced_frames,
+                    )
+                    next_log = now + 1.0
+        finally:
+            if previous_frame is not None:
+                previous_frame.close()
 
         return metrics.report(
             adapter_description=self.adapter_description,
@@ -1385,6 +1421,8 @@ class D3D11GpuPipeline:
         # Release consumers before WGC releases the shared device/context.
         if self.presenter is not None:
             self.presenter.close()
+        if self.frame_generator is not None:
+            self.frame_generator.close()
         if self.scaling_pass is not None:
             self.scaling_pass.close()
         if self.capture is not None:

@@ -220,6 +220,27 @@ def test_cli_accepts_performance_telemetry_and_queue_depth(monkeypatch) -> None:
     assert args.queue_depth == 3
 
 
+def test_cli_accepts_presentation_buffer(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["main.py", "--presentation-buffer-ms", "500"],
+    )
+
+    assert main.parse_args().presentation_buffer_ms == pytest.approx(500.0)
+
+
+def test_cli_rejects_unsupported_presentation_buffer(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["main.py", "--presentation-buffer-ms", "750"],
+    )
+
+    with pytest.raises(SystemExit):
+        main.parse_args()
+
+
 @pytest.mark.parametrize("queue_depth", ["0", "-1"])
 def test_cli_rejects_invalid_queue_depth(monkeypatch, queue_depth: str) -> None:
     monkeypatch.setattr(
@@ -341,11 +362,20 @@ def test_live_rife_factory_uses_selected_provider_and_shuts_down(
     created = []
 
     class FakeRIFEInterpolator:
-        def __init__(self, model_path, *, provider, device_id, temporal_stabilization):
+        def __init__(
+            self,
+            model_path,
+            *,
+            provider,
+            device_id,
+            temporal_stabilization,
+            ui_stabilization,
+        ):
             self.model_path = model_path
             self.provider = provider
             self.device_id = device_id
             self.temporal_stabilization = temporal_stabilization
+            self.ui_stabilization = ui_stabilization
             self.initialized = False
             self.shutdown_calls = 0
             created.append(self)
@@ -369,6 +399,7 @@ def test_live_rife_factory_uses_selected_provider_and_shuts_down(
     assert interpolator.model_path == main.DEFAULT_RIFE_MODEL_PATH
     assert interpolator.provider == "directml"
     assert interpolator.device_id == 0
+    assert interpolator.ui_stabilization is True
     assert interpolator.temporal_stabilization is True
     assert interpolator.initialized is True
     assert interpolator.shutdown_calls == 1

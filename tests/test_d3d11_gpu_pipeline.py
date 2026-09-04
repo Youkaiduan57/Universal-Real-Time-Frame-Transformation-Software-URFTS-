@@ -189,6 +189,27 @@ def test_gpu_metrics_report_cpu_side_distributions() -> None:
     assert report.gpu_timestamp_queries is False
 
 
+def test_gpu_metrics_count_generated_and_real_presentations() -> None:
+    metrics = GpuPipelineMetrics()
+    metrics.started_at = 10.0
+    metrics.record(
+        acquisition_ms=1.0,
+        scale_submit_ms=1.0,
+        present_submit_ms=1.0,
+        cpu_loop_ms=4.0,
+        source_size=(1280, 720),
+        output_size=(1920, 1080),
+        presented_count=2,
+    )
+    report = metrics.report(
+        adapter_description="GPU",
+        replaced_frames=0,
+        ended_at=11.0,
+    )
+    assert report.presented_frames == 2
+    assert report.presented_fps == 2.0
+
+
 class _FakeGpuRuntime:
     def __init__(self, frames=(), size=(4, 3)) -> None:
         self.size = size

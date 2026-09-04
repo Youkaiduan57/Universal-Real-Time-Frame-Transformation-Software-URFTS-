@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from frame_pacing import FramePacer, PresentationFrame
+from frame_pacing import FramePacer, PresentationFrame, SourceRateEstimator
 
 
 class FakeClock:
@@ -238,3 +238,60 @@ def test_gui_overload_keeps_latest_real_but_drops_late_generated():
     assert decisions[1].present
     assert clock.waits == []
     assert pacer.snapshot().presented_real_frames == 1
+
+
+def test_source_rate_history_resets_after_a_long_capture_stall() -> None:
+    estimator = SourceRateEstimator()
+    for index in range(8):
+        estimator.add(100.0 + index / 30)
+    assert estimator.reliable
+
+    estimator.add(101.0)
+
+    assert estimator.reliable is False
+    assert estimator.fps == 0.0
+
+
+def test_timestamp_tolerance_avoids_false_generated_late_reanchor() -> None:
+    clock = FakeClock()
+    pacer = FramePacer(
+        mode="fixed",
+        target_fps=60,
+        timestamp_tolerance=0.05,
+        clock=clock,
+        waiter=clock.wait,
+    )
+    pacer.pace_batch([frame("A", 100.0)])
+    expected = 100.0 + 1 / 60
+    clock.value = expected + 0.0007
+
+    decisions = pacer.pace_batch(
+        [frame("M", clock.value, "generated"), frame("B", clock.value)]
+    )
+
+    assert decisions[0].present
+    assert decisions[0].scheduled_at == pytest.approx(expected)
+
+
+def test_queue_draining_momentum_shortens_future_slots_after_spike() -> None:
+    clock = FakeClock()
+    pacer = FramePacer(
+        mode="fixed",
+        target_fps=60,
+        max_frame_latency_ms=1000,
+        queue_draining_momentum=0.01,
+        clock=clock,
+        waiter=clock.wait,
+    )
+    pacer.pace_batch([frame("A", 100.0)])
+    clock.value = 100.1
+    pacer.pace_batch(
+        [frame("M", 100.1, "generated"), frame("B", 100.1)]
+    )
+    previous_slot = pacer.snapshot().scheduled_presentation_timestamp
+
+    next_decision = pacer.pace_batch([frame("C", clock.value)])[0]
+
+    assert next_decision.scheduled_at - previous_slot == pytest.approx(
+        (1 / 60) * 0.99
+    )

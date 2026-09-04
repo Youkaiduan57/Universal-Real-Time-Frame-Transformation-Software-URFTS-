@@ -37,6 +37,11 @@ from frame_interpolator import (
     RIFEInterpolator,
     RIFEInterpolatorError,
 )
+from frame_generation_runtime import (
+    NativeDirectMLTextureInterpolator,
+    benchmark_directml_devices,
+    probe_gpu_resident_backend,
+)
 from frame_pacing import (
     DEFAULT_MAX_FRAME_LATENCY_MS,
     FramePacer,
@@ -292,12 +297,25 @@ def parse_args() -> argparse.Namespace:
         help="Non-negative DirectML device ID (ignored by the CPU provider).",
     )
     parser.add_argument(
+        "--ui-stabilization",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Protect persistent HUD and text edges from interpolation ghosting.",
+    )
+    parser.add_argument(
+        "--presentation-buffer-ms",
+        type=float,
+        choices=(0.0, 250.0, 500.0, 1000.0, 2000.0),
+        default=0.0,
+        help="Optional bounded video delay that absorbs short processing spikes.",
+    )
+    parser.add_argument(
         "--rife-device-id",
         type=int,
         default=None,
         help=(
             "Optional DirectML device used only for frame generation. "
-            "Defaults to --ai-device-id."
+            "Defaults to --ai-device-id; use -1 to benchmark available adapters."
         ),
     )
     parser.add_argument(
@@ -390,8 +408,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--ai-input-height must be greater than zero.")
     if args.ai_device_id < 0:
         parser.error("--ai-device-id must be zero or greater.")
-    if args.rife_device_id is not None and args.rife_device_id < 0:
-        parser.error("--rife-device-id must be zero or greater.")
+    if args.rife_device_id is not None and args.rife_device_id < -1:
+        parser.error("--rife-device-id must be -1 (auto) or zero or greater.")
     if args.ai_tile_size is not None and args.ai_tile_size <= 0:
         parser.error("--ai-tile-size must be greater than zero.")
     if args.ai_tile_overlap < 0:
@@ -670,6 +688,7 @@ def _create_frame_interpolator(
     inference_height: int | None = None,
     model_path: Path | None = None,
     temporal_stabilization: bool = True,
+    ui_stabilization: bool = True,
 ):
     """Create and initialize the selected optional interpolation hook."""
 
@@ -689,6 +708,7 @@ def _create_frame_interpolator(
             provider=provider,
             device_id=device_id,
             temporal_stabilization=temporal_stabilization,
+            ui_stabilization=ui_stabilization,
             **inference_options,
         )
     else:
@@ -774,6 +794,10 @@ def run_application(
         ),
         shutdown_event=shutdown_event,
         keep_latest_real=getattr(args, "keep_latest_real", False),
+        timestamp_tolerance=0.05,
+        queue_draining_momentum=(
+            0.01 if float(getattr(args, "presentation_buffer_ms", 0.0)) > 0.0 else 0.0
+        ),
     )
 
     app_config = ApplicationConfig()
@@ -809,6 +833,10 @@ def run_application(
     model_path = getattr(args, "model", None)
     logger.info("Requested frame processor: %s", processor_name.upper())
     logger.info("Requested runtime pipeline: %s", getattr(args, "pipeline", "cpu").upper())
+    logger.info(
+        "Requested presentation buffer: %.0f ms",
+        float(getattr(args, "presentation_buffer_ms", 0.0)),
+    )
     logger.info("Preview enabled: %s", not args.no_preview)
     logger.info("=" * 50)
 
@@ -839,11 +867,10 @@ def run_application(
         return
 
     if getattr(args, "pipeline", "cpu") == "d3d11":
-        if getattr(args, "frame_generation", "off") != "off":
-            logger.error(
-                "Live frame generation uses the CPU-frame async runtime; "
-                "the D3D11 shader pipeline remains unchanged."
-            )
+        gpu_frame_generation = getattr(args, "frame_generation", "off") != "off"
+        gpu_capability = probe_gpu_resident_backend()
+        if gpu_frame_generation and not gpu_capability.available:
+            logger.error("GPU-resident frame generation is unavailable: %s", gpu_capability.reason)
             return
         if processor_name == "ai":
             logger.error(
@@ -873,6 +900,19 @@ def run_application(
             logger.info("Saved runtime profile overrides to %s", profile_file)
 
         def run_gpu_pipeline():
+            frame_generator_factory = None
+            if gpu_frame_generation:
+                frame_generator_factory = lambda device: NativeDirectMLTextureInterpolator(
+                    model_path=getattr(args, "rife_model", None) or DEFAULT_RIFE_MODEL_PATH,
+                    device_id=(
+                        getattr(args, "rife_device_id", None)
+                        if getattr(args, "rife_device_id", None) not in (None, -1)
+                        else getattr(args, "ai_device_id", 0)
+                    ),
+                    d3d11_device_pointer=device,
+                    inference_width=getattr(args, "rife_input_width", None) or 320,
+                    inference_height=getattr(args, "rife_input_height", None) or 180,
+                )
             gpu_pipeline = D3D11GpuPipeline(
                 hwnd=selected_window.hwnd,
                 output_width=app_config.output_width,
@@ -882,6 +922,7 @@ def run_application(
                 fsr1_like_sharpening_strength=runtime_profile.fsr1_like_sharpening_strength,
                 fsr1_like_sharpening_enabled=runtime_profile.fsr1_like_sharpening_enabled,
                 frame_pacer=pacer,
+                frame_generator_factory=frame_generator_factory,
             )
             try:
                 return gpu_pipeline.run()
@@ -1089,19 +1130,51 @@ def run_application(
     logger.info("Active frame processor: %s", active_processor_display_name)
     show_performance = getattr(args, "show_performance", False)
     metrics = PerformanceMetrics(enabled=show_performance, window_size=60)
-    def create_interpolator(*, provider: str | None = None):
+    configured_rife_device = (
+        getattr(args, "rife_device_id", None)
+        if getattr(args, "rife_device_id", None) is not None
+        else getattr(args, "ai_device_id", 0)
+    )
+    resolved_rife_device = configured_rife_device
+
+    def create_interpolator_on_device(device_id: int, *, provider: str = "directml"):
         return _create_frame_interpolator(
             getattr(args, "frame_generation", "off"),
-            provider=provider or getattr(args, "ai_provider", "cpu"),
-            device_id=(
-                getattr(args, "rife_device_id", None)
-                if getattr(args, "rife_device_id", None) is not None
-                else getattr(args, "ai_device_id", 0)
-            ),
+            provider=provider,
+            device_id=device_id,
             inference_width=getattr(args, "rife_input_width", None),
             inference_height=getattr(args, "rife_input_height", None),
             model_path=getattr(args, "rife_model", None),
             temporal_stabilization=getattr(args, "temporal_stabilization", True),
+            ui_stabilization=getattr(args, "ui_stabilization", True),
+        )
+
+    if (
+        getattr(args, "frame_generation", "off") == "rife"
+        and getattr(args, "ai_provider", "cpu") == "directml"
+        and configured_rife_device == -1
+    ):
+        try:
+            resolved_rife_device, benchmark_results = benchmark_directml_devices(
+                lambda device_id: create_interpolator_on_device(device_id),
+            )
+        except RuntimeError as error:
+            logger.error("Unable to auto-select a frame-generation adapter: %s", error)
+            capture.close()
+            return
+        logger.info(
+            "Frame-generation adapter benchmark: %s; selected device %s",
+            ", ".join(
+                f"device {result.device_id} {result.average_ms:.2f} ms/call"
+                for result in benchmark_results
+            ),
+            resolved_rife_device,
+        )
+
+    def create_interpolator(*, provider: str | None = None):
+        return create_interpolator_on_device(
+            resolved_rife_device if resolved_rife_device >= 0 else 0,
+            provider=provider or getattr(args, "ai_provider", "cpu"),
         )
 
     try:
@@ -1150,12 +1223,19 @@ def run_application(
         )
     if frame_interpolator is not None:
         logger.info("Selected RIFE model: %s", getattr(args, "rife_model", None) or DEFAULT_RIFE_MODEL_PATH)
+        capabilities = getattr(frame_interpolator, "model_capabilities", None)
+        if capabilities is not None:
+            logger.info(
+                "Frame-generation model: family %s, tier %s, alignment %s, GPU-resident I/O %s",
+                capabilities.family,
+                capabilities.performance_tier,
+                capabilities.input_alignment,
+                "supported" if capabilities.supports_gpu_resident_io else "requires native bridge",
+            )
         if getattr(args, "ai_provider", "cpu") == "directml":
             logger.info(
                 "Requested frame-generation DirectML device: %s",
-                getattr(args, "rife_device_id", None)
-                if getattr(args, "rife_device_id", None) is not None
-                else getattr(args, "ai_device_id", 0),
+                resolved_rife_device,
             )
         logger.info(
             "Active frame generation: %s (%s)",
@@ -1183,6 +1263,8 @@ def run_application(
         frame_interpolator=frame_interpolator,
         generated_frames=getattr(args, "generated_frames", 1),
         queue_depth=getattr(args, "queue_depth", 2),
+        presentation_buffer_ms=getattr(args, "presentation_buffer_ms", 0.0),
+        presentation_target_fps=getattr(args, "target_fps", None),
         collect_telemetry=show_performance,
     )
     recovery.set_on_recovery(pipeline.clear_queued_frames)
@@ -1232,10 +1314,13 @@ def run_application(
                     if pipeline.finished:
                         break
                     continue
+                presentation_delay = (
+                    float(getattr(args, "presentation_buffer_ms", 0.0)) / 1000.0
+                )
                 pacing_decisions = pacer.iter_pace_batch(
                     PresentationFrame(
                         processed_frame,
-                        processed_frame.captured_at,
+                        processed_frame.captured_at + presentation_delay,
                         processed_frame.frame_kind,
                     )
                     for processed_frame in processed_batch

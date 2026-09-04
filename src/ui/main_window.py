@@ -257,10 +257,11 @@ class MainWindow(QMainWindow):
         )
         self.rife_provider_row = card.add_row(SettingsRow("Provider", self.rife_provider_combo))
         self.rife_device_id = QSpinBox()
-        self.rife_device_id.setRange(0, 64)
+        self.rife_device_id.setRange(-1, 64)
+        self.rife_device_id.setSpecialValueText("Auto")
         self.rife_device_id.setToolTip(
             "DirectML adapter used only for frame generation. On dual-GPU laptops, "
-            "try the iGPU here to leave the game GPU free."
+            "Auto benchmarks available adapters; a fixed ID avoids startup benchmarking."
         )
         self.rife_device_id.setAccessibleName("Frame generation device")
         self.rife_device_row = card.add_row(SettingsRow("Device", self.rife_device_id))
@@ -448,6 +449,20 @@ class MainWindow(QMainWindow):
         self.max_latency.setRange(1, 60000)
         self.max_latency.setSuffix(" ms")
         card.add_row(SettingsRow("Maximum latency", self.max_latency))
+        self.presentation_buffer_combo = _combo(
+            (
+                (0.0, "Off (low latency)"),
+                (250.0, "250 ms"),
+                (500.0, "500 ms"),
+                (1000.0, "1 second"),
+                (2000.0, "2 seconds"),
+            ),
+            "Presentation buffer",
+        )
+        self.presentation_buffer_combo.setToolTip(
+            "Adds video delay to absorb short processing spikes. It cannot fix sustained overload."
+        )
+        card.add_row(SettingsRow("Presentation buffer", self.presentation_buffer_combo))
         self.overlay = Switch()
         self.overlay.setAccessibleName("Show output FPS counter")
         card.add_row(SettingsRow("FPS counter overlay", self.overlay))
@@ -465,6 +480,14 @@ class MainWindow(QMainWindow):
             "clear motion remains model-generated."
         )
         card.add_row(SettingsRow("Temporal stabilization", self.temporal_stabilization))
+        self.ui_stabilization = Switch()
+        self.ui_stabilization.setAccessibleName(
+            "Protect HUD and text during frame generation"
+        )
+        self.ui_stabilization.setToolTip(
+            "Protects persistent high-contrast screen-space edges using a stable endpoint blend."
+        )
+        card.add_row(SettingsRow("HUD stabilization", self.ui_stabilization))
 
         self.pacing_combo = self._build_pacing_combo()
         card.add_row(SettingsRow("Frame pacing", self.pacing_combo))
@@ -613,6 +636,7 @@ class MainWindow(QMainWindow):
         self.temporal_stabilization.toggled.connect(
             lambda _checked: self._settings_changed()
         )
+        self.ui_stabilization.toggled.connect(lambda _checked: self._settings_changed())
         self.generated_frames_combo.currentIndexChanged.connect(
             lambda _index: self._settings_changed()
         )
@@ -642,6 +666,7 @@ class MainWindow(QMainWindow):
         for widget in (self.tile_overlap, self.ai_width, self.ai_height, self.queue_depth):
             widget.valueChanged.connect(lambda _value: self._settings_changed())
         self.max_latency.valueChanged.connect(lambda _value: self._settings_changed())
+        self.presentation_buffer_combo.currentIndexChanged.connect(self._settings_changed)
         self.provider_fallback.toggled.connect(lambda _checked: self._settings_changed())
         self.overlay.toggled.connect(lambda _checked: self._settings_changed())
         self.fsr_sharpening.toggled.connect(lambda _checked: self._settings_changed())
@@ -709,11 +734,13 @@ class MainWindow(QMainWindow):
         self._set_combo(self.pacing_combo, self.settings.frame_pacing)
         self._set_combo(self.rife_pacing_combo, self.settings.frame_pacing)
         self.max_latency.setValue(self.settings.max_frame_latency_ms)
+        self._set_combo(self.presentation_buffer_combo, self.settings.presentation_buffer_ms)
         self.queue_depth.setValue(self.settings.queue_depth)
         self.provider_fallback.setChecked(self.settings.allow_provider_fallback)
         self.overlay.setChecked(self.settings.show_performance_overlay)
         self._set_combo(self.output_refinement_combo, self.settings.output_refinement)
         self.temporal_stabilization.setChecked(self.settings.temporal_stabilization)
+        self.ui_stabilization.setChecked(self.settings.ui_stabilization)
         self.fsr_sharpening.setChecked(self.settings.fsr1_like_sharpening)
         self.fsr_sharpening_strength.setValue(self.settings.fsr1_like_sharpening_strength)
         self.fsr_edge_strength.setValue(self.settings.fsr1_like_edge_strength)
@@ -788,11 +815,15 @@ class MainWindow(QMainWindow):
         self.settings.ai_input_height = self.ai_height.value()
         self.settings.frame_pacing = str(self.pacing_combo.currentData() or "auto")
         self.settings.max_frame_latency_ms = self.max_latency.value()
+        self.settings.presentation_buffer_ms = float(
+            self.presentation_buffer_combo.currentData() or 0.0
+        )
         self.settings.queue_depth = self.queue_depth.value()
         self.settings.allow_provider_fallback = self.provider_fallback.isChecked()
         self.settings.show_performance_overlay = self.overlay.isChecked()
         self.settings.output_refinement = float(self.output_refinement_combo.currentData() or 0.0)
         self.settings.temporal_stabilization = self.temporal_stabilization.isChecked()
+        self.settings.ui_stabilization = self.ui_stabilization.isChecked()
         self.settings.ai_model_path = (
             self._custom_model_path if self.model_combo.currentData() == "custom" else ""
         )
@@ -1181,12 +1212,16 @@ class MainWindow(QMainWindow):
             ai_input_height=self.ai_height.value(),
             frame_pacing=str(self.pacing_combo.currentData()),
             max_frame_latency_ms=self.max_latency.value(),
+            presentation_buffer_ms=float(
+                self.presentation_buffer_combo.currentData() or 0.0
+            ),
             queue_depth=self.queue_depth.value(),
             allow_provider_fallback=self.provider_fallback.isChecked(),
             show_performance_overlay=self.overlay.isChecked(),
             output_refinement=(float(self.output_refinement_combo.currentData() or 0.0)
                                if self.pipeline_combo.currentData() == "cpu" else 0.0),
             temporal_stabilization=self.temporal_stabilization.isChecked(),
+            ui_stabilization=self.ui_stabilization.isChecked(),
             model_path=(
                 Path(self._custom_model_path)
                 if self.model_combo.currentData() == "custom"

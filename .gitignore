@@ -9,3 +9,9 @@ __pycache__/
 *.spec
 !UniversalUpscaler.spec
 packaging-report*.json
+native/third_party/
+native/build/
+*.pyd
+src/onnxruntime.dll
+src/onnxruntime_providers_shared.dll
+src/DirectML.dll

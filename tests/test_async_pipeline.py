@@ -460,6 +460,74 @@ def test_frame_generation_drops_stale_generated_output_as_one_new_batch() -> Non
         pipeline.stop()
 
 
+def test_presentation_buffer_holds_then_releases_complete_batch() -> None:
+    class IdentityProcessor:
+        def process(self, frame):
+            return frame
+
+    pipeline = AsyncFramePipeline(
+        IdentityProcessor(),
+        presentation_buffer_ms=50.0,
+    )
+    pipeline.start()
+    try:
+        pipeline.submit("A")
+        _wait_for_processed_frames(pipeline, 1)
+
+        assert pipeline.take_presentation_batch(timeout=0.0) == []
+        batch = pipeline.take_presentation_batch(timeout=0.2)
+
+        assert [frame.image for frame in batch] == ["A"]
+        assert pipeline.result_replacements == 0
+    finally:
+        pipeline.stop()
+
+
+def test_presentation_buffer_is_bounded_and_discards_oldest_batch() -> None:
+    class IdentityProcessor:
+        def process(self, frame):
+            return frame
+
+    pipeline = AsyncFramePipeline(
+        IdentityProcessor(),
+        presentation_buffer_ms=10.0,
+        presentation_target_fps=60.0,
+    )
+    pipeline.start()
+    try:
+        for count, frame in enumerate(("A", "B", "C", "D"), start=1):
+            pipeline.submit(frame)
+            _wait_for_processed_frames(pipeline, count)
+
+        time.sleep(0.02)
+        first_retained = pipeline.take_presentation_batch(timeout=0.1)
+
+        assert [frame.image for frame in first_retained] == ["B"]
+        assert pipeline.result_replacements == 1
+        assert pipeline.queue_sizes().output == 2
+    finally:
+        pipeline.stop()
+
+
+def test_presentation_buffer_capacity_uses_source_batches_not_generated_ratio() -> None:
+    pipeline = AsyncFramePipeline(
+        object(),
+        frame_interpolator=object(),
+        generated_frames=1,
+        presentation_buffer_ms=1000.0,
+        presentation_target_fps=60.0,
+    )
+
+    # A 60-batch/s stationary shortcut must retain a complete second of history.
+    assert pipeline._buffered_batch_capacity == 62
+
+
+@pytest.mark.parametrize("buffer_ms", (-1.0, 2001.0, float("nan")))
+def test_presentation_buffer_rejects_invalid_duration(buffer_ms: float) -> None:
+    with pytest.raises(ValueError, match="between 0 and 2000"):
+        AsyncFramePipeline(object(), presentation_buffer_ms=buffer_ms)
+
+
 def test_frame_generation_shutdown_releases_workers_and_previous_frame() -> None:
     interpolator = _MidpointInterpolator()
 

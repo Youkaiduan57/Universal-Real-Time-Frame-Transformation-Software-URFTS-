@@ -57,11 +57,24 @@ The Start button counts down from five before capture begins, giving you time to
 
 The first real frame establishes interpolation history, so a short finite session has one fewer generated interval than its real-frame count. Selecting 60 FPS is a pacing target, not a guarantee that the hardware can calculate 60 frames per second.
 
+Rendering also offers an optional 250 ms, 500 ms, one-second, or two-second
+presentation buffer. This bounded video delay can absorb short processing spikes
+without allowing latency to grow indefinitely. It cannot compensate when average
+processing time remains slower than the source cadence. Audio and controls are not
+delayed, so the mode is intended for offline visual testing; low-latency mode remains
+the default. Longer buffers retain more full-resolution frames in memory. The CLI
+equivalent is `--presentation-buffer-ms 500`.
+
 Temporal stabilization is enabled by default in the GUI. Effectively duplicate
 frame pairs bypass model inference, nearly stationary regions retain stable real
 pixels, and low-motion generated values are constrained by their two real
 endpoints. Moving regions remain model-generated. The control can be disabled
 under Rendering for direct A/B comparisons.
+
+HUD stabilization is also enabled by default. It detects persistent high-contrast
+edges at the small interpolation resolution and prefers stable endpoint pixels in
+those regions, reducing text and HUD ghosting without adding a full-resolution
+analysis pass.
 
 On the first packaged-app run, UniversalUpscaler benchmarks the local CPU and OpenCV configuration before starting the countdown. The result is saved in the user's local application-data directory, so subsequent starts skip that one-time tuning.
 
@@ -71,13 +84,21 @@ AI upscaling and frame generation have independent DirectML device controls. On
 dual-GPU laptops, this permits the game and optional AI upscaler to remain on the
 discrete GPU while interpolation runs on the integrated GPU. The CLI equivalent
 is `--ai-device-id 1 --rife-device-id 0`; actual adapter ordering is system-specific.
+Set the frame-generation device to **Auto** (CLI `--rife-device-id -1`) to benchmark
+the available DirectML adapters and select the fastest successful one for that run.
+
+The pacer estimates cadence from a rolling 15-frame history, resets history after
+long capture stalls, tolerates small source-timestamp jitter, and gradually drains
+backlog after spikes when the optional presentation buffer is active. This avoids
+reacting to every isolated frame-time variation.
 
 ## Feature status
 
 - Confirmed working: WGC capture, CPU spatial upscaling, ONNX AI processing, RIFE interpolation, and the shader runtime tested with AssaultCube and Portal 2.
 - Supported CPU combinations: spatial or AI upscaling with optional RIFE 1x-4x generation.
 - D3D11 remains experimental. It requires a selected WGC window and `nearest`, `bilinear`, `lanczos`, or `fsr1_like` spatial processing.
-- AI processing and frame generation use the CPU-frame pipeline and cannot currently be combined with D3D11.
+- The Python D3D11 host can now retain capture, interpolation, scaling, and presentation as D3D11 textures. Frame generation on this path requires an optional native `_urfts_directml` bridge implementing ABI version 1; without that module the GUI reports the capability as unavailable and continues to use the CPU-frame pipeline.
+- Existing IFRNet-S and RIFE Lite files are classified as performance-tier models. A newly trained low-cost model can advertise `urfts.performance_tier=performance` and `urfts.gpu_resident_io=true` in its ONNX metadata.
 - D3D11 presentation requires an interactive Windows graphics session and cannot use `--no-preview`.
 - The bundled AI model is SRVGGNetCompact x2. Custom ONNX models must match the selected tensor layout, color order, and scale.
 
@@ -99,21 +120,9 @@ Application Window
         v
 Windows Graphics Capture
         |
-        v
-Newest Frame Queue
+        +---- CPU-frame path ----> Processing / interpolation ----> Pacing ----> Preview
         |
-        +-------------> Spatial Processing
-        |
-        +-------------> AI Processing (ONNX)
-                              |
-                              v
-                     Optional RIFE Generation
-                              |
-                              v
-                     Frame Pacing & Scheduling
-                              |
-                              v
-                       Enhanced Presentation
+        +---- D3D11 texture path -> Native DirectML bridge -------> Pacing ----> Swap chain
 ```
 
 ## Tests

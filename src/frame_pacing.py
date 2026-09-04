@@ -54,15 +54,29 @@ class PacingSnapshot:
 class SourceRateEstimator:
     """Estimate a stable source cadence from monotonic capture timestamps."""
 
-    def __init__(self, *, window_size: int = 30, minimum_samples: int = 5) -> None:
+    def __init__(
+        self,
+        *,
+        window_size: int = 15,
+        minimum_samples: int = 5,
+        reset_multiplier: float = 6.0,
+    ) -> None:
         if window_size < minimum_samples or minimum_samples < 2:
             raise ValueError("Source-rate estimator window is too small.")
         self._timestamps: deque[float] = deque(maxlen=window_size + 1)
         self._minimum_samples = minimum_samples
+        self._reset_multiplier = float(reset_multiplier)
 
     def add(self, timestamp: float) -> None:
         if self._timestamps and timestamp <= self._timestamps[-1]:
             return
+        if len(self._timestamps) >= 3:
+            intervals = self._intervals()
+            median = statistics.median(intervals)
+            if median > 0.0 and timestamp - self._timestamps[-1] > (
+                median * self._reset_multiplier
+            ):
+                self._timestamps.clear()
         self._timestamps.append(float(timestamp))
 
     @property
@@ -106,6 +120,8 @@ class FramePacer:
         shutdown_event: threading.Event | None = None,
         waiter: Callable[[float], bool] | None = None,
         keep_latest_real: bool = False,
+        timestamp_tolerance: float = 0.05,
+        queue_draining_momentum: float = 0.0,
     ) -> None:
         normalized_mode = str(mode).strip().lower()
         if normalized_mode not in PACING_MODES:
@@ -118,6 +134,10 @@ class FramePacer:
             raise ValueError("Maximum frame latency must be a positive finite value.")
         if normalized_mode == "fixed" and target_fps is None:
             raise ValueError("Fixed frame pacing requires --target-fps.")
+        if not 0.0 <= float(timestamp_tolerance) <= 0.25:
+            raise ValueError("Timestamp tolerance must be between 0 and 0.25.")
+        if not 0.0 <= float(queue_draining_momentum) <= 0.10:
+            raise ValueError("Queue-draining momentum must be between 0 and 0.10.")
 
         self.keep_latest_real = keep_latest_real
         self.mode = normalized_mode
@@ -128,6 +148,9 @@ class FramePacer:
         self._shutdown_event = shutdown_event or threading.Event()
         self._waiter = waiter or self._shutdown_event.wait
         self._source_rate = SourceRateEstimator()
+        self.timestamp_tolerance = float(timestamp_tolerance)
+        self.queue_draining_momentum = float(queue_draining_momentum)
+        self._drain_debt_seconds = 0.0
         self._last_scheduled: float | None = None
         self._presented_at: deque[float] = deque(maxlen=120)
         self._scheduled_at = 0.0
@@ -147,7 +170,7 @@ class FramePacer:
     def stop(self) -> None:
         self._shutdown_event.set()
 
-    def _interval(self, *, batch_size: int) -> float | None:
+    def _base_interval(self, *, batch_size: int) -> float | None:
         if self.mode == "off":
             return None
         if self.target_fps is not None:
@@ -156,6 +179,14 @@ class FramePacer:
             return None
         source_interval = 1.0 / self._source_rate.fps
         return source_interval / max(1, batch_size)
+
+    def _interval(self, *, batch_size: int) -> tuple[float | None, float | None]:
+        base = self._base_interval(batch_size=batch_size)
+        if base is None:
+            return None, None
+        if self._drain_debt_seconds <= 0.0 or self.queue_draining_momentum <= 0.0:
+            return base, base
+        return base * (1.0 - self.queue_draining_momentum), base
 
     def pace_batch(self, frames: Iterable[PresentationFrame]) -> list[PacingDecision]:
         """Collect decisions for callers that do not render live output."""
@@ -173,7 +204,11 @@ class FramePacer:
         for frame in batch:
             if frame.frame_kind != "generated":
                 self._source_rate.add(frame.captured_at)
-        interval = self._interval(batch_size=len(batch))
+        interval, base_interval = self._interval(batch_size=len(batch))
+        lateness_tolerance = max(
+            0.0005,
+            (base_interval or 0.0) * self.timestamp_tolerance,
+        )
 
         for index, frame in enumerate(batch):
             now = self._clock()
@@ -192,8 +227,12 @@ class FramePacer:
                 index == 0
                 and frame.frame_kind == "generated"
                 and interval is not None
-                and now - scheduled > 0.0005
+                and now - scheduled > lateness_tolerance
             ):
+                self._drain_debt_seconds = min(
+                    self._max_latency_seconds,
+                    self._drain_debt_seconds + max(0.0, now - scheduled),
+                )
                 scheduled = now
 
             # A generated midpoint never gets to hold a ready real frame past
@@ -210,7 +249,7 @@ class FramePacer:
                 )
                 next_real_slot = scheduled + (interval or 0.0)
                 timing_late = interval is not None and (
-                    now - scheduled > 0.0005
+                    now - scheduled > lateness_tolerance
                     or now >= scheduled + interval
                 )
                 if timing_late or next_real_slot >= real_deadline:
@@ -241,6 +280,11 @@ class FramePacer:
             if error_ms > 0.5:
                 self._late_frames += 1
             self._record_presented(frame, scheduled, actual, error_ms)
+            if interval is not None and base_interval is not None:
+                self._drain_debt_seconds = max(
+                    0.0,
+                    self._drain_debt_seconds - max(0.0, base_interval - interval),
+                )
 
             # Re-anchor after a seriously late real frame so the pacer never
             # emits a catch-up burst of stale presentation slots.

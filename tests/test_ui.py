@@ -274,6 +274,7 @@ def test_settings_persist_without_hwnd(tmp_path: Path) -> None:
         generated_frames=4,
         performance_preset="quality",
         target_fps="144",
+        presentation_buffer_ms=500.0,
         advanced_visible=True,
     )
     store.save(values)
@@ -282,6 +283,7 @@ def test_settings_persist_without_hwnd(tmp_path: Path) -> None:
     assert loaded.frame_generation == "rife"
     assert loaded.generated_frames == 4
     assert loaded.performance_preset == "quality"
+    assert loaded.presentation_buffer_ms == 500.0
     assert "hwnd" not in store.path.read_text(encoding="utf-8").lower()
 
 
@@ -328,8 +330,9 @@ def test_conditional_controls_and_preset_mapping(qt_app, tmp_path: Path) -> None
         RuntimeConfiguration(hwnd=0),
         RuntimeConfiguration(hwnd=1, target_fps=0),
         RuntimeConfiguration(hwnd=1, queue_depth=0),
+        RuntimeConfiguration(hwnd=1, presentation_buffer_ms=750.0),
         RuntimeConfiguration(hwnd=1, ai_input_width=0),
-        RuntimeConfiguration(hwnd=1, rife_device_id=-1),
+        RuntimeConfiguration(hwnd=1, rife_device_id=-2),
     ],
 )
 def test_invalid_configuration_is_rejected(configuration) -> None:

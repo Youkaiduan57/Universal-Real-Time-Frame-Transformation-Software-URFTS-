@@ -77,6 +77,14 @@ class RIFETensorMetadata:
     layout: str
 
 
+@dataclass(frozen=True, slots=True)
+class FrameGenerationModelCapabilities:
+    family: str
+    performance_tier: str
+    input_alignment: int
+    supports_gpu_resident_io: bool
+
+
 class _SessionValue(Protocol):
     name: str
     shape: list[object]
@@ -143,6 +151,7 @@ class RIFEInterpolator(FrameInterpolator):
         inference_width: int | None = None,
         inference_height: int | None = None,
         temporal_stabilization: bool = False,
+        ui_stabilization: bool = True,
         session_factory: SessionFactory | None = None,
     ) -> None:
         self.model_path = model_path
@@ -183,6 +192,9 @@ class RIFEInterpolator(FrameInterpolator):
         if not isinstance(temporal_stabilization, bool):
             raise TypeError("Temporal stabilization must be a boolean.")
         self.temporal_stabilization = temporal_stabilization
+        if not isinstance(ui_stabilization, bool):
+            raise TypeError("UI stabilization must be a boolean.")
+        self.ui_stabilization = ui_stabilization
         self._input_alignment = 32
         self._session_factory = session_factory or ort.InferenceSession
         self._session: _InferenceSession | None = None
@@ -190,6 +202,12 @@ class RIFEInterpolator(FrameInterpolator):
         self.active_providers: tuple[str, ...] = ()
         self.input_metadata: tuple[RIFETensorMetadata, ...] = ()
         self.output_metadata: RIFETensorMetadata | None = None
+        self.model_capabilities = FrameGenerationModelCapabilities(
+            family="unknown",
+            performance_tier="standard",
+            input_alignment=32,
+            supports_gpu_resident_io=False,
+        )
         self._input_names: tuple[str, str] | None = None
         self._output_name: str | None = None
         self._input_shapes: tuple[tuple[object, ...], tuple[object, ...]] | None = None
@@ -348,6 +366,24 @@ class RIFEInterpolator(FrameInterpolator):
         if alignment < 16 or alignment > 512 or alignment & (alignment - 1):
             raise RIFEInterpolatorError("Unsupported RIFE input alignment.")
         self._input_alignment = alignment
+        filename = resolved_path.name.lower()
+        inferred_family = "ifrnet" if "ifrnet" in filename else "rife"
+        inferred_tier = (
+            "performance"
+            if "lite" in filename or "ifrnet_s" in filename or "ifrnet-s" in filename
+            else "standard"
+        )
+        self.model_capabilities = FrameGenerationModelCapabilities(
+            family=str(metadata.get("urfts.model_family", inferred_family)).strip().lower(),
+            performance_tier=str(
+                metadata.get("urfts.performance_tier", inferred_tier)
+            ).strip().lower(),
+            input_alignment=alignment,
+            supports_gpu_resident_io=(
+                str(metadata.get("urfts.gpu_resident_io", "false")).strip().lower()
+                in {"1", "true", "yes"}
+            ),
+        )
         if requested_provider not in active_providers:
             raise RIFEInterpolatorError(
                 f"Requested {requested_provider} is not active for RIFE. Active "
@@ -467,7 +503,7 @@ class RIFEInterpolator(FrameInterpolator):
             ) from error
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         logging.getLogger(__name__).info(
-            "RIFE warmup: %s calls at %sx%s completed in %.2f ms",
+            "Frame-generation warmup: %s calls at %sx%s completed in %.2f ms",
             iterations,
             width,
             height,
@@ -715,8 +751,29 @@ class RIFEInterpolator(FrameInterpolator):
             return output
         return cv2.add(output, adjustment)
 
+    @staticmethod
+    def _ui_stability_mask(frame_a, frame_b, motion):
+        """Find persistent high-contrast screen-space edges such as HUD text."""
+
+        first_gray = cv2.cvtColor(frame_a, cv2.COLOR_BGR2GRAY)
+        second_gray = cv2.cvtColor(frame_b, cv2.COLOR_BGR2GRAY)
+        edges = cv2.max(
+            cv2.Canny(first_gray, 48, 112),
+            cv2.Canny(second_gray, 48, 112),
+        )
+        persistent = cv2.compare(motion, 18, cv2.CMP_LE)
+        ui_mask = cv2.bitwise_and(edges, persistent)
+        return cv2.dilate(ui_mask, np.ones((3, 3), dtype=np.uint8), iterations=1)
+
     @classmethod
-    def _confidence_composite(cls, output, frame_a, frame_b):
+    def _confidence_composite(
+        cls,
+        output,
+        frame_a,
+        frame_b,
+        *,
+        ui_stabilization: bool = False,
+    ):
         """Use model output only where a cheap midpoint confidence check passes.
 
         All analysis is performed at inference resolution. The returned mask is
@@ -742,6 +799,11 @@ class RIFEInterpolator(FrameInterpolator):
         inconsistent = cv2.compare(residual, allowed_residual, cv2.CMP_GT)
         inconsistent = cv2.dilate(inconsistent, kernel)
         fallback = cv2.max(low_motion, inconsistent)
+        if ui_stabilization:
+            fallback = cv2.max(
+                fallback,
+                cls._ui_stability_mask(frame_a, frame_b, motion),
+            )
         cv2.copyTo(midpoint, fallback, output)
         fallback_fraction = float(cv2.countNonZero(fallback)) / float(fallback.size)
         return output, fallback_fraction, fallback
@@ -893,7 +955,10 @@ class RIFEInterpolator(FrameInterpolator):
                 self.last_stabilized_fraction,
                 fallback_mask,
             ) = self._confidence_composite(
-                output, inference_frame_a, inference_frame_b
+                output,
+                inference_frame_a,
+                inference_frame_b,
+                ui_stabilization=self.ui_stabilization,
             )
             self.last_interpolation_confidence = 1.0 - self.last_stabilized_fraction
         output_was_resized = output.shape[:2] != (original_height, original_width)
@@ -948,7 +1013,7 @@ class RIFEInterpolator(FrameInterpolator):
             samples = self._profile_samples
             means = [sum(row[i] for row in samples) / len(samples) for i in range(5)]
             logging.getLogger(__name__).info(
-                "RIFE stages (%s calls, %sx%s inference): preprocess %.2f ms, "
+                "Frame-generation stages (%s calls, %sx%s inference): preprocess %.2f ms, "
                 "inference %.2f ms, postprocess %.2f ms, total %.2f ms, "
                 "confidence %.1f%%",
                 len(samples), inference_width, inference_height,
