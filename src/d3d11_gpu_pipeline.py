@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 DXGI_FORMAT_B8G8R8A8_UNORM = 87
 DXGI_FORMAT_NAME = "DXGI_FORMAT_B8G8R8A8_UNORM"
-SUPPORTED_D3D11_SCALERS = ("nearest", "bilinear", "lanczos", "fsr1_like")
+SUPPORTED_D3D11_SCALERS = ("nearest", "bilinear", "bicubic", "lanczos", "fsr1_like")
 
 _D3D11_BIND_CONSTANT_BUFFER = 0x4
 _D3D11_BIND_SHADER_RESOURCE = 0x8
@@ -92,12 +92,12 @@ def validate_gpu_pipeline_request(
 ) -> None:
     """Validate explicit GPU mode without silently substituting a CPU path."""
 
-    if capture_backend not in ("auto", "wgc"):
+    if capture_backend not in ("auto", "wgc", "obs"):
         raise D3D11CapabilityError(
             "The D3D11 GPU path requires selected-window WGC capture; "
             f"capture backend '{capture_backend}' is incompatible."
         )
-    if not selected_window:
+    if not selected_window and capture_backend != "obs":
         raise D3D11CapabilityError(
             "The D3D11 GPU path requires a visible window selected by title or HWND."
         )
@@ -424,7 +424,7 @@ class D3D11ScalingPass:
         )(self._device, ctypes.byref(sampler_desc), ctypes.byref(self._sampler))
         _check_hresult(result, "ID3D11Device.CreateSamplerState")
 
-        if self.method in ("lanczos", "fsr1_like"):
+        if self.method in ("bicubic", "lanczos", "fsr1_like"):
             constant_buffer_desc = _D3D11BufferDesc(
                 ByteWidth=ctypes.sizeof(_ScalingConstants),
                 Usage=_D3D11_USAGE_DEFAULT,
@@ -820,6 +820,7 @@ class D3D11SwapChainPresenter:
         width: int,
         height: int,
         vsync: bool = True,
+        target_hwnd: int = 0,
     ) -> None:
         self._device = _add_ref(device)
         self._context = _add_ref(context)
@@ -827,6 +828,7 @@ class D3D11SwapChainPresenter:
         self._render_target_view = ctypes.c_void_p()
         self._size = PresenterSizeState(width, height)
         self.vsync = bool(vsync)
+        self._game_preview = None
         self._quit_requested = False
         self._closed = False
         self._user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -841,6 +843,11 @@ class D3D11SwapChainPresenter:
             self._create_window(width, height)
             self._create_swap_chain(width, height)
             self._create_render_target()
+            from game_preview import GamePreview, configure_clickthrough
+            if target_hwnd:
+                self._game_preview = GamePreview("", target_hwnd, hwnd=self.hwnd)
+            else:
+                configure_clickthrough(self.hwnd)
         except Exception as error:
             self.close()
             if isinstance(error, D3D11GpuError):
@@ -937,6 +944,10 @@ class D3D11SwapChainPresenter:
         return int(self._hwnd or 0)
 
     def _window_proc(self, hwnd, message, wparam, lparam):
+        if message == 0x0021:  # WM_MOUSEACTIVATE / MA_NOACTIVATE
+            return 3
+        if message == 0x0084:  # WM_NCHITTEST / HTTRANSPARENT
+            return -1
         if message == self._WM_KEYDOWN and int(wparam) in (ord("Q"), ord("q")):
             self._quit_requested = True
             self._user32.DestroyWindow(hwnd)
@@ -984,7 +995,7 @@ class D3D11SwapChainPresenter:
         outer_width = rect.right - rect.left
         outer_height = rect.bottom - rect.top
         self._hwnd = self._user32.CreateWindowExW(
-            0,
+            0x08000000 | 0x00000080,  # WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
             self._class_name,
             "UniversalUpscaler Preview",
             self._STYLE,
@@ -999,9 +1010,8 @@ class D3D11SwapChainPresenter:
         )
         if not self._hwnd:
             raise D3D11PresentationError(f"CreateWindowExW failed: {ctypes.WinError(ctypes.get_last_error())}")
-        self._user32.ShowWindow(self._hwnd, self._SW_SHOW)
+        self._user32.ShowWindow(self._hwnd, 4)  # SW_SHOWNOACTIVATE
         self._user32.UpdateWindow(self._hwnd)
-        self._user32.SetForegroundWindow(self._hwnd)
 
     def _create_swap_chain(self, width: int, height: int) -> None:
         dxgi_device = ctypes.c_void_p()
@@ -1103,6 +1113,11 @@ class D3D11SwapChainPresenter:
             _release(back_buffer)
 
     def pump_messages(self) -> None:
+        from game_preview import GamePreview
+        if GamePreview.stop_requested():
+            self._quit_requested = True
+        if self._game_preview is not None and not self._game_preview.update():
+            self._quit_requested = True
         message = _Msg()
         while self._user32.PeekMessageW(
             ctypes.byref(message), None, 0, 0, self._PM_REMOVE
@@ -1149,7 +1164,7 @@ class D3D11SwapChainPresenter:
         outer_width = rect.right - rect.left
         outer_height = rect.bottom - rect.top
         if not self._user32.SetWindowPos(
-            self._hwnd, None, 0, 0, outer_width, outer_height, 0x0002 | 0x0004
+            self._hwnd, None, 0, 0, outer_width, outer_height, 0x0002 | 0x0004 | 0x0010
         ):
             raise D3D11PresentationError(f"SetWindowPos failed: {ctypes.WinError(ctypes.get_last_error())}")
 
@@ -1210,9 +1225,10 @@ class D3D11GpuPipeline:
         fsr1_like_sharpening_enabled: bool = FSR1_LIKE_DEFAULT_SHARPENING_ENABLED,
         frame_pacer: Any | None = None,
         frame_generator_factory: Callable[[ctypes.c_void_p], Any] | None = None,
+        capture_backend: str = "wgc",
     ) -> None:
         validate_gpu_pipeline_request(
-            capture_backend="wgc",
+            capture_backend=capture_backend,
             method=method,
             output_width=output_width,
             output_height=output_height,
@@ -1228,7 +1244,12 @@ class D3D11GpuPipeline:
         self._closed = False
         self._validation_resource_lease = ResourceLease("d3d_resources")
         try:
-            self.capture = WGCCaptureBackend(hwnd)
+            self.capture_backend = capture_backend
+            if capture_backend == "obs":
+                from obs_capture import OBSCaptureBackend
+                self.capture = OBSCaptureBackend()
+            else:
+                self.capture = WGCCaptureBackend(hwnd)
             device = self.capture.d3d11_device_pointer
             context = self.capture.d3d11_context_pointer
             self.adapter_description = describe_dxgi_adapter(device)
@@ -1248,6 +1269,7 @@ class D3D11GpuPipeline:
                 width=output_width,
                 height=output_height,
                 vsync=vsync,
+                target_hwnd=hwnd,
             )
         except Exception:
             self.close()
@@ -1256,7 +1278,9 @@ class D3D11GpuPipeline:
         self._validation_resource_lease.acquire()
 
         logger.info("Active GPU path: D3D11 GPU")
-        logger.info("Active capture backend: WGC")
+        logger.info("Active capture backend: %s", capture_backend.upper())
+        if capture_backend == "obs":
+            logger.info("OBS source is configured in OBS; sender URFTS; timestamps are receipt times; sender drops unavailable.")
         logger.info("Active DXGI adapter: %s", self.adapter_description)
         logger.info(
             "D3D11 scaler: %s | output %sx%s | format %s | flip-discard | vsync %s",
@@ -1266,7 +1290,7 @@ class D3D11GpuPipeline:
             DXGI_FORMAT_NAME,
             "on" if vsync else "off",
         )
-        logger.info("Press Q in the D3D11 presentation window or Ctrl+C to quit.")
+        logger.info("GPU preview is click-through; Alt-Tab hides it for a selected game. Ctrl+Alt+Q or GUI Stop quits.")
         logger.info("GPU timestamp queries: not implemented; metrics are CPU-side only.")
         if self.frame_generator is not None:
             logger.info("Active frame generation: DirectML GPU-resident texture path")
@@ -1282,6 +1306,7 @@ class D3D11GpuPipeline:
         *,
         duration_seconds: float | None = None,
         warmup_seconds: float = 0.0,
+        stop_requested: Callable[[], bool] | None = None,
     ) -> GpuPipelineReport:
         if (
             self._closed
@@ -1308,7 +1333,7 @@ class D3D11GpuPipeline:
 
         previous_frame: D3D11Frame | None = None
         try:
-            while not self.presenter.quit_requested:
+            while not self.presenter.quit_requested and not (stop_requested and stop_requested()):
                 self.presenter.pump_messages()
                 if self.presenter.quit_requested:
                     break
@@ -1324,6 +1349,11 @@ class D3D11GpuPipeline:
                 presentation_frames = [(frame, "real")]
                 presented_count = 0
                 try:
+                    if (previous_frame is not None and
+                        (previous_frame.width, previous_frame.height, previous_frame.dxgi_format) !=
+                        (frame.width, frame.height, frame.dxgi_format)):
+                        previous_frame.close()
+                        previous_frame = None
                     if self.frame_generator is not None and previous_frame is not None:
                         generated_frame = self.frame_generator.interpolate(previous_frame, frame)
                         presentation_frames.insert(0, (generated_frame, "generated"))
@@ -1347,6 +1377,8 @@ class D3D11GpuPipeline:
                     present_start = scale_start
                     present_end = scale_start
                     for pacing in decisions:
+                        if stop_requested and stop_requested():
+                            break
                         if not pacing.present:
                             continue
                         output_width, output_height = self.presenter.output_size
@@ -1388,9 +1420,10 @@ class D3D11GpuPipeline:
                         ended_at=now,
                     )
                     logger.info(
-                        "D3D11 GPU | WGC %sx%s -> %sx%s | %s | %.1f FPS | "
+                        "D3D11 GPU | %s %sx%s -> %sx%s | %s | %.1f FPS | "
                         "acquire %.2f ms | scale submit %.2f ms | present call %.2f ms | "
                         "loop %.2f ms | replaced %s",
+                        self.capture_backend.upper(),
                         report.source_width,
                         report.source_height,
                         report.output_width,

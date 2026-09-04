@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QPlainTextEdit,
@@ -38,6 +39,7 @@ from ui.controller import (
     RIFE_LITE_MODEL,
     IFRNET_MODEL,
     SRVGG_MODEL,
+    QUICKSR_MODEL,
     RuntimeConfiguration,
 )
 from ui.settings_store import GuiSettings, SettingsStore
@@ -210,6 +212,8 @@ class MainWindow(QMainWindow):
         self.settings_scroll.setWidgetResizable(True)
         self.settings_canvas = QWidget()
         canvas_layout = QVBoxLayout(self.settings_canvas)
+        # Propagate newly visible cards' minimum height to the scroll area.
+        canvas_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         canvas_layout.setContentsMargins(28, 4, 28, 28)
         canvas_layout.setSpacing(0)
         self.workspace_grid = QGridLayout()
@@ -288,6 +292,15 @@ class MainWindow(QMainWindow):
 
     def _build_upscaling_card(self) -> SettingsCard:
         card = SettingsCard("Upscaling")
+        self.workflow_combo = _combo((("combined", "Upscaling + optional frame generation"),
+                                      ("upscale_only", "Upscaling only — no generated frames")), "Workflow")
+        card.add_row(SettingsRow("Workflow", self.workflow_combo))
+        self.ai_test_profile_button = QPushButton("Open AI Quality Test profile")
+        self.ai_test_profile_button.clicked.connect(self._open_ai_test_profile)
+        card.add_widget(self.ai_test_profile_button)
+        self.quicksr_profile_button = QPushButton("Open QuickSRNet Test profile")
+        self.quicksr_profile_button.clicked.connect(lambda: self._open_ai_test_profile(quick=True))
+        card.add_widget(self.quicksr_profile_button)
         self.upscaling_enabled = Switch()
         self.upscaling_enabled.setAccessibleName("Enable upscaling")
         card.add_row(SettingsRow("Enabled", self.upscaling_enabled))
@@ -339,13 +352,17 @@ class MainWindow(QMainWindow):
         target_layout.addWidget(self.refresh_button)
         card.add_row(SettingsRow("Target window", target))
         self.capture_backend_combo = _combo(
-            (("auto", "Auto"), ("wgc", "WGC"), ("dxcam", "DXCam"), ("mss", "MSS")),
+            (("auto", "Auto"), ("wgc", "WGC"), ("obs", "OBS Spout (experimental)"), ("dxcam", "DXCam"), ("mss", "MSS")),
             "Capture API",
         )
         runtime_mode = QLineEdit("Asynchronous")
         runtime_mode.setReadOnly(True)
         runtime_mode.setEnabled(False)
         card.add_row(SettingsRow("Capture API", self.capture_backend_combo))
+        self.capture_backend_combo.setToolTip(
+            "OBS requires the D3D11 pipeline and OBS with Spout output named URFTS. "
+            "Select the capture source in OBS Game Capture; the target window here controls only preview focus/Alt-Tab."
+        )
         card.add_row(SettingsRow("Runtime mode", runtime_mode))
         self.queue_depth = QSpinBox()
         self.queue_depth.setRange(1, 16)
@@ -356,7 +373,8 @@ class MainWindow(QMainWindow):
     def _build_ai_card(self) -> SettingsCard:
         card = SettingsCard("AI Settings")
         self.model_combo = _combo(
-            ((str(SRVGG_MODEL), "SRVGGNetCompact ×2"), ("custom", "Custom ONNX model")),
+            ((str(SRVGG_MODEL), "SRVGGNetCompact ×2"), ("custom", "Custom ONNX model"),
+             (str(QUICKSR_MODEL), "QuickSRNet Small ×2 (experimental)")),
             "AI model",
         )
         self.browse_model_button = QPushButton("Browse…")
@@ -395,6 +413,9 @@ class MainWindow(QMainWindow):
         card.add_row(SettingsRow("Output layout", self.ai_output_layout_combo))
         card.add_row(SettingsRow("Color order", self.ai_color_order_combo))
         self.ai_width = QSpinBox()
+        self.ai_input_policy_combo = _combo((("native", "Native source — preserve input detail"),
+                                            ("custom", "Custom size — may discard detail")), "AI input resolution")
+        card.add_row(SettingsRow("AI input", self.ai_input_policy_combo))
         self.ai_width.setRange(16, 4096)
         self.ai_height = QSpinBox()
         self.ai_height.setRange(16, 4096)
@@ -413,6 +434,10 @@ class MainWindow(QMainWindow):
             "AI tiling",
         )
         self.tile_row = card.add_row(SettingsRow("Tiling", self.tile_combo))
+        self.ai_reuse_static_tiles = Switch()
+        self.ai_reuse_static_tiles.setAccessibleName("Reuse unchanged AI tiles")
+        card.add_row(SettingsRow("Reuse unchanged tiles", self.ai_reuse_static_tiles,
+            "Experimental. Processes changed regions; forces small tiles. Camera motion may update all tiles."))
         self.tile_overlap = QSpinBox()
         self.tile_overlap.setRange(0, 128)
         self.tile_overlap.setSuffix(" px")
@@ -420,7 +445,7 @@ class MainWindow(QMainWindow):
         self.provider_fallback = Switch()
         self.provider_fallback.setAccessibleName("Allow CPU provider fallback")
         card.add_row(SettingsRow("CPU fallback", self.provider_fallback))
-        self.ai_warning = QLabel("AI upscaling can require substantially more processing time at large internal sizes.")
+        self.ai_warning = QLabel("Native source keeps all captured detail but can be much slower. Tiling limits memory, not total work. Custom smaller inputs discard detail before AI inference. AI may alter faces/text; it cannot recover guaranteed true detail or bypass protected video capture.")
         self.ai_warning.setObjectName("rowDescription")
         self.ai_warning.setWordWrap(True)
         card.add_widget(self.ai_warning)
@@ -429,7 +454,8 @@ class MainWindow(QMainWindow):
     def _build_rendering_card(self) -> SettingsCard:
         card = SettingsCard("Rendering")
         self.pipeline_combo = _combo(
-            (("cpu", "CPU-frame pipeline"), ("d3d11", "D3D11 GPU pipeline")),
+            (("cpu", "CPU-frame pipeline"), ("d3d11", "D3D11 GPU pipeline"),
+             ("d3d11_experimental", "D3D11 + GPU frame gen (experimental)")),
             "Runtime pipeline",
         )
         card.add_row(SettingsRow("Pipeline", self.pipeline_combo))
@@ -630,6 +656,9 @@ class MainWindow(QMainWindow):
         self.refresh_button.clicked.connect(self.refresh_windows)
         self.window_combo.currentIndexChanged.connect(self._update_start_enabled)
         self.upscaling_control.value_changed.connect(self._mode_changed)
+        self.workflow_combo.currentIndexChanged.connect(self._mode_changed)
+        self.ai_input_policy_combo.currentIndexChanged.connect(self._mode_changed)
+        self.ai_reuse_static_tiles.toggled.connect(lambda _checked: self._settings_changed())
         self.frame_generation_control.value_changed.connect(self._frame_generation_changed)
         self.rife_model_combo.currentIndexChanged.connect(self._settings_changed)
         self.output_refinement_combo.currentIndexChanged.connect(self._settings_changed)
@@ -703,6 +732,8 @@ class MainWindow(QMainWindow):
         if restore_profiles:
             self._apply_profile_payload(self.settings.selected_profile)
         self.upscaling_control.set_value(self.settings.upscaling_mode)
+        self._set_combo(self.workflow_combo, self.settings.workflow)
+        self._set_combo(self.ai_input_policy_combo, self.settings.ai_input_policy)
         self.frame_generation_control.set_value(self.settings.frame_generation)
         self._set_combo(self.rife_model_combo, self.settings.rife_model_path or str(RIFE_MODEL))
         self._set_combo(self.generated_frames_combo, self.settings.generated_frames)
@@ -728,6 +759,7 @@ class MainWindow(QMainWindow):
         self._set_combo(self.capture_backend_combo, self.settings.capture_backend)
         self._set_combo(self.pipeline_combo, self.settings.pipeline)
         self._set_combo(self.tile_combo, self.settings.ai_tile)
+        self.ai_reuse_static_tiles.setChecked(self.settings.ai_reuse_static_tiles)
         self.tile_overlap.setValue(self.settings.ai_tile_overlap)
         self.ai_width.setValue(self.settings.ai_input_width)
         self.ai_height.setValue(self.settings.ai_input_height)
@@ -766,6 +798,9 @@ class MainWindow(QMainWindow):
 
     def _apply_profile_payload(self, name: str) -> None:
         payload = self.settings.profile_settings.get(name, {})
+        if payload:
+            self.settings.workflow = payload.get("workflow", "combined")
+            self.settings.ai_input_policy = payload.get("ai_input_policy", "custom")
         allowed = {field.name for field in fields(GuiSettings)} - {
             "theme",
             "profiles",
@@ -785,20 +820,23 @@ class MainWindow(QMainWindow):
 
     def _restore_model_selection(self) -> None:
         custom_path = self.settings.ai_model_path.strip()
-        self._custom_model_path = custom_path
-        self.model_combo.setCurrentIndex(1 if custom_path else 0)
-        if custom_path:
+        builtin = self.model_combo.findData(custom_path or str(SRVGG_MODEL))
+        self._custom_model_path = custom_path if builtin < 0 else ""
+        self.model_combo.setCurrentIndex(builtin if builtin >= 0 else 1)
+        if custom_path and builtin < 0:
             self.model_combo.setItemText(1, f"Custom: {Path(custom_path).name}")
             self.model_path_label.setText(custom_path)
         else:
             self.model_combo.setItemText(1, "Custom ONNX model")
-            self.model_path_label.setText(str(SRVGG_MODEL))
-        self.browse_model_button.setVisible(bool(custom_path) or self.model_combo.currentData() == "custom")
+            self.model_path_label.setText(str(self.model_combo.currentData()))
+        self.browse_model_button.setVisible(self.model_combo.currentData() == "custom")
 
     def _save_settings(self) -> None:
         if self._loading:
             return
         self.settings.upscaling_mode = self.upscaling_control.value()
+        self.settings.workflow = str(self.workflow_combo.currentData())
+        self.settings.ai_input_policy = str(self.ai_input_policy_combo.currentData())
         self.settings.upscaling_method = str(self.method_combo.currentData() or "bilinear")
         self.settings.frame_generation = self.frame_generation_control.value()
         self.settings.rife_model_path = str(self.rife_model_combo.currentData() or RIFE_MODEL)
@@ -810,6 +848,7 @@ class MainWindow(QMainWindow):
         self.settings.device_id = self.device_id.value()
         self.settings.rife_device_id = self.rife_device_id.value()
         self.settings.ai_tile = str(self.tile_combo.currentData() or "auto")
+        self.settings.ai_reuse_static_tiles = self.ai_reuse_static_tiles.isChecked()
         self.settings.ai_tile_overlap = self.tile_overlap.value()
         self.settings.ai_input_width = self.ai_width.value()
         self.settings.ai_input_height = self.ai_height.value()
@@ -825,7 +864,8 @@ class MainWindow(QMainWindow):
         self.settings.temporal_stabilization = self.temporal_stabilization.isChecked()
         self.settings.ui_stabilization = self.ui_stabilization.isChecked()
         self.settings.ai_model_path = (
-            self._custom_model_path if self.model_combo.currentData() == "custom" else ""
+            self._custom_model_path if self.model_combo.currentData() == "custom"
+            else ("" if self.model_combo.currentData() == str(SRVGG_MODEL) else str(self.model_combo.currentData()))
         )
         self.settings.ai_scale = str(self.ai_scale_combo.currentData() or "auto")
         self.settings.ai_input_layout = str(self.ai_input_layout_combo.currentData() or "nchw")
@@ -891,6 +931,29 @@ class MainWindow(QMainWindow):
         self._show_view(self.workspace_page)
         if save:
             self._save_settings()
+
+    def _open_ai_test_profile(self, *, quick: bool = False) -> None:
+        name = "QuickSRNet Test" if quick else "AI Quality Test"
+        self._save_settings()
+        if name not in self.settings.profiles:
+            payload = dict(self.settings.profile_settings.get(self.settings.selected_profile, {}))
+            payload.update(
+                workflow="upscale_only", upscaling_mode="ai", upscaling_method="srvgg",
+                ai_model_path="", ai_scale="2", ai_input_policy="native",
+                ai_input_layout="nchw", ai_output_layout="nchw", ai_color_order="rgb",
+                ai_tile="auto", ai_tile_overlap=16, ai_reuse_static_tiles=True,
+                frame_generation="off", provider="directml", pipeline="cpu",
+                capture_backend="wgc", target_fps="auto", frame_pacing="auto",
+                presentation_buffer_ms=0.0, queue_depth=2, max_frame_latency_ms=150.0,
+                output_refinement=0.0, show_performance_overlay=True,
+                allow_provider_fallback=False,
+            )
+            if quick:
+                payload.update(ai_model_path=str(QUICKSR_MODEL), ai_tile="off", ai_reuse_static_tiles=False)
+            self.settings.profiles.append(name)
+            self.settings.profile_settings[name] = payload
+            self._rebuild_profile_buttons()
+        self._select_profile(name)
 
     def _add_profile(self, name: str | None = None) -> None:
         if name is None:
@@ -1010,7 +1073,7 @@ class MainWindow(QMainWindow):
         if custom:
             self.model_path_label.setText(self._custom_model_path or "No custom ONNX model selected.")
         else:
-            self.model_path_label.setText(str(SRVGG_MODEL))
+            self.model_path_label.setText(str(self.model_combo.currentData()))
         self._settings_changed()
 
     def _browse_model(self) -> None:
@@ -1038,7 +1101,7 @@ class MainWindow(QMainWindow):
         self.method_combo.blockSignals(True)
         self.method_combo.clear()
         if mode == "ai":
-            items = (("srvgg", "SRVGGNetCompact ×2"),)
+            items = (("srvgg", "Selected AI model (below)"),)
         elif mode == "shader":
             items = (
                 ("nearest", "Nearest"),
@@ -1060,9 +1123,8 @@ class MainWindow(QMainWindow):
             return
         value = str(self.preset_combo.currentData())
         preset = PRESETS[value]
-        self.ai_width.setValue(preset["width"])
-        self.ai_height.setValue(preset["height"])
-        self._set_combo(self.tile_combo, preset["tile"])
+        # Frame-generation presets must not silently shrink AI upscaling input
+        # or replace its independently chosen tiling policy.
         self._apply_preset_latency()
         self.queue_depth.setValue(preset["queue"])
         self._set_combo(self.default_preset_combo, value)
@@ -1115,9 +1177,13 @@ class MainWindow(QMainWindow):
         self._settings_changed()
 
     def _update_visibility(self) -> None:
+        upscale_only = self.workflow_combo.currentData() == "upscale_only"
+        self.frame_card.setEnabled(not upscale_only)
+        self.frame_card.setToolTip("Frame generation is bypassed in Upscaling only mode." if upscale_only else "")
+        self.ai_dims.setEnabled(self.ai_input_policy_combo.currentData() == "custom")
         ai_enabled = self.upscaling_control.value() == "ai"
         upscaling_enabled = self.upscaling_control.value() != "off"
-        rife_enabled = self.frame_generation_control.value() == "rife"
+        rife_enabled = not upscale_only and self.frame_generation_control.value() == "rife"
         self.upscaling_type_row.setVisible(upscaling_enabled)
         self.method_row.setVisible(upscaling_enabled)
         self.preset_row.setVisible(upscaling_enabled)
@@ -1196,6 +1262,8 @@ class MainWindow(QMainWindow):
         return RuntimeConfiguration(
             hwnd=int(self.window_combo.currentData() or 0),
             upscaling_mode=self.upscaling_control.value(),
+            workflow=str(self.workflow_combo.currentData()),
+            ai_input_policy=str(self.ai_input_policy_combo.currentData()),
             upscaling_method=str(self.method_combo.currentData() or "bilinear"),
             frame_generation=self.frame_generation_control.value(),
             generated_frames=int(self.generated_frames_combo.currentData() or 1),
@@ -1207,6 +1275,7 @@ class MainWindow(QMainWindow):
             device_id=self.device_id.value(),
             rife_device_id=self.rife_device_id.value(),
             ai_tile=str(self.tile_combo.currentData()),
+            ai_reuse_static_tiles=self.ai_reuse_static_tiles.isChecked(),
             ai_tile_overlap=self.tile_overlap.value(),
             ai_input_width=self.ai_width.value(),
             ai_input_height=self.ai_height.value(),
@@ -1225,7 +1294,7 @@ class MainWindow(QMainWindow):
             model_path=(
                 Path(self._custom_model_path)
                 if self.model_combo.currentData() == "custom"
-                else SRVGG_MODEL
+                else Path(self.model_combo.currentData() or SRVGG_MODEL)
             ),
             ai_scale=str(self.ai_scale_combo.currentData()),
             ai_input_layout=str(self.ai_input_layout_combo.currentData()),
@@ -1239,7 +1308,7 @@ class MainWindow(QMainWindow):
         )
 
     def _update_start_enabled(self) -> None:
-        valid = self.window_combo.currentData() is not None
+        valid = self.window_combo.currentData() is not None or self.capture_backend_combo.currentData() == "obs"
         if valid:
             try:
                 self._configuration().validate()
@@ -1281,7 +1350,9 @@ class MainWindow(QMainWindow):
         self.start_button.setProperty("danger", running)
         self.start_button.style().unpolish(self.start_button)
         self.start_button.style().polish(self.start_button)
-        self.start_button.setEnabled(True if running else self.window_combo.currentData() is not None)
+        self.start_button.setEnabled(True if running else (
+            self.window_combo.currentData() is not None or self.capture_backend_combo.currentData() == "obs"
+        ))
 
     def _state_changed(self, state: str) -> None:
         if state.startswith("warming_up_"):
@@ -1341,22 +1412,31 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "workspace_grid"):
             return
         width = width if width is not None else self.settings_scroll.viewport().width()
-        columns = 2 if width >= 760 else 1
+        columns = 2 if width >= 1300 else 1
         cards = [card for card in self._workspace_cards if card is not self.ai_card or self.upscaling_control.value() == "ai"]
         signature = tuple(id(card) for card in cards)
-        if (
-            self.workspace_grid.count()
-            and columns == self.workspace_column_count
-            and signature == self._workspace_layout_signature
-        ):
-            return
+        # Recompute heights even when the card list is unchanged: changing a
+        # mode can reveal additional rows and invalidate the old grid geometry.
+        for row in range(self.workspace_grid.rowCount()):
+            self.workspace_grid.setRowMinimumHeight(row, 0)
+        self.workspace_grid.setColumnStretch(1, 0)
         while self.workspace_grid.count():
             self.workspace_grid.takeAt(0)
         self.workspace_column_count = columns
         self._workspace_layout_signature = signature
+        card_width = max(1, (width - 56 - (columns - 1) * 10) // columns)
+        row_heights = {}
         for index, card in enumerate(cards):
             row, column = divmod(index, columns)
-            self.workspace_grid.addWidget(card, row, column)
+            layout = card.layout()
+            layout.invalidate()
+            height = max(layout.totalMinimumSize().height(), layout.totalHeightForWidth(card_width))
+            card.setMinimumHeight(height)
+            row_heights[row] = max(row_heights.get(row, 0), height)
+            self.workspace_grid.addWidget(card, row, column, Qt.AlignmentFlag.AlignTop)
+        for row, height in row_heights.items():
+            self.workspace_grid.setRowMinimumHeight(row, height)
+        self.settings_canvas.setMinimumHeight(sum(row_heights.values()) + max(0, len(row_heights) - 1) * 10 + 32)
         for column in range(columns):
             self.workspace_grid.setColumnStretch(column, 1)
 

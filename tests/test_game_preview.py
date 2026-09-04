@@ -2,7 +2,11 @@ from types import SimpleNamespace
 import game_preview
 
 
-def test_preview_is_click_through_hides_on_alt_tab_and_restores(monkeypatch):
+import pytest
+
+
+@pytest.mark.parametrize("explicit_hwnd", [None, 10])
+def test_preview_is_click_through_hides_on_alt_tab_and_restores(monkeypatch, explicit_hwnd):
     calls = []
     state = {"foreground": 20, "exists": True}
     gui = SimpleNamespace(
@@ -17,7 +21,7 @@ def test_preview_is_click_through_hides_on_alt_tab_and_restores(monkeypatch):
     monkeypatch.setattr(game_preview, "win32gui", gui)
     monkeypatch.setattr(game_preview.win32api, "MonitorFromWindow", lambda *a: 1)
     monkeypatch.setattr(game_preview.win32api, "GetMonitorInfo", lambda h: {"Monitor": (0,0,1920,1080)})
-    preview = game_preview.GamePreview("Preview", 20)
+    preview = game_preview.GamePreview("Preview", 20, hwnd=explicit_hwnd)
     flags = calls[0][1][-1]
     c = game_preview.win32con
     assert flags & c.WS_EX_TRANSPARENT and flags & c.WS_EX_LAYERED and flags & c.WS_EX_NOACTIVATE

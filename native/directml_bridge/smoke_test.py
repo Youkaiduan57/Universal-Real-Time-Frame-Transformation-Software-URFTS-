@@ -17,7 +17,7 @@ import _urfts_directml as bridge
 import numpy as np
 
 
-def verify_pixels(device, context, output):
+def verify_pixels(device, context, output, expected=None):
     desc = _D3D11Texture2DDesc()
     _vtable_function(output, 10, None, ct.POINTER(_D3D11Texture2DDesc))(output, ct.byref(desc))
     desc.Usage, desc.BindFlags, desc.CPUAccessFlags, desc.MiscFlags = 3, 0, 0x20000, 0
@@ -38,9 +38,10 @@ def verify_pixels(device, context, output):
         try:
             raw = np.ctypeslib.as_array((ct.c_ubyte * (mapped.RowPitch * desc.Height)).from_address(mapped.pData))
             rgb = raw.reshape(desc.Height, mapped.RowPitch)[:, :desc.Width*4].reshape(desc.Height, desc.Width, 4)[..., :3]
-            error = np.abs(rgb.astype(float) - np.array([192, 128, 64])).mean()
-            print(f"constant_colour_mae={error:.3f}", flush=True)
-            assert error < 5.0, f"Incorrect colour or tensor data: MAE={error}"
+            expected = np.array([192, 128, 64]) if expected is None else expected
+            error = np.abs(rgb.astype(float) - expected).max()
+            print(f"maximum_pixel_error={error:.3f}", flush=True)
+            assert error <= 1.0, f"Incorrect colour, static detail, or retained texture: max error={error}"
         finally:
             _vtable_function(context, 15, None, ct.c_void_p, ct.c_uint)(context, staging, 0)
     finally:
@@ -58,6 +59,7 @@ def main():
     if hr < 0:
         raise RuntimeError(f"D3D11CreateDevice: {hr:#x}")
     texture = ct.c_void_p()
+    retained = ct.c_void_p()
     generator = None
     try:
         desc = _D3D11Texture2DDesc(
@@ -75,7 +77,10 @@ def main():
         if hr < 0:
             raise RuntimeError(f"CreateTexture2D: {hr:#x}")
         generator = bridge.create_frame_generator(
-            str(ROOT / "models/IFRNet_S_Vimeo90K.onnx"), -1, device.value, 160, 96)
+            str(ROOT / "models" / (sys.argv[1] if len(sys.argv)>1 else "IFRNet_S_Vimeo90K.onnx")), -1, device.value, 160, 90)
+        from d3d11_gpu_pipeline import D3D11ScalingPass
+        scaler = D3D11ScalingPass(device,context,method="bicubic")
+        scaler.close()
         for i in range(3):
             start = time.perf_counter()
             output = ct.c_void_p(bridge.interpolate_d3d11(
@@ -83,13 +88,29 @@ def main():
             try:
                 verify_pixels(device, context, output)
             finally:
-                _release(output)
+                if i == 0:
+                    retained = output
+                else:
+                    _release(output)
             print(f"iteration={i} elapsed_ms={(time.perf_counter()-start)*1000:.2f}", flush=True)
-        print("CONSTANT-COLOUR TEXTURE TEST PASS (motion quality not tested)", flush=True)
+        # High-frequency source detail must survive low-resolution inference.
+        pixels_np = np.ctypeslib.as_array(pixels).reshape(96,160,4)
+        pixels_np[::2,::2,:3] = [220,20,80]
+        expected = pixels_np[...,:3][...,::-1].copy()
+        _vtable_function(context,48,None,ct.c_void_p,ct.c_uint,ct.c_void_p,
+                         ct.c_void_p,ct.c_uint,ct.c_uint)(context,texture,0,None,pixels,160*4,0)
+        output = ct.c_void_p(bridge.interpolate_d3d11(generator,texture.value,texture.value,160,96))
+        try:
+            verify_pixels(device,context,output,expected)
+            verify_pixels(device,context,retained)
+        finally:
+            _release(output)
+        print("PADDED INPUT / STATIC DETAIL / RETAINED OUTPUT TESTS PASS (moving gameplay not tested)", flush=True)
     finally:
         if generator is not None:
             bridge.close_frame_generator(generator)
             generator = None
+        _release(retained)
         _release(texture)
         _release(context)
         _release(device)

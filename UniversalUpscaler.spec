@@ -16,6 +16,9 @@ src_root = project_root / "src"
 
 datas = [
     (str(project_root / "models" / "SRVGGNetCompact_x2.onnx"), "models"),
+    (str(project_root / "models" / "QuickSRNetSmall_x2.onnx"), "models"),
+    (str(project_root / "models" / "QuickSRNetSmall_x2_LICENSE.md"), "models"),
+    (str(project_root / "models" / "QuickSRNetSmall_x2.provenance.json"), "models"),
     (str(project_root / "models" / "RIFE_v3.6.onnx"), "models"),
     (str(project_root / "models" / "RIFE_v3.6_PROVENANCE.md"), "models"),
     (str(project_root / "models" / "RIFE_v4.25_lite.onnx"), "models"),
@@ -40,6 +43,15 @@ for package in ("onnxruntime", "cv2", "dxcam"):
 native_bridge = src_root / "_urfts_directml.pyd"
 if native_bridge.is_file():
     binaries.append((str(native_bridge), "."))
+    for dependency in ("onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll"):
+        path = src_root / dependency
+        if not path.is_file():
+            raise RuntimeError(f"Native DirectML bridge requires matching runtime DLL: {path}")
+        binaries.append((str(path), "."))
+obs_bridge = src_root / "_urfts_obs_spout.pyd"
+if obs_bridge.is_file():
+    binaries.append((str(obs_bridge), "."))
+    datas.append((str(project_root / "native/obs_spout/Spout_LICENSE.txt"), "licenses"))
 
 for package in ("dxcam", "mss", "comtypes"):
     datas += collect_data_files(package)

@@ -159,9 +159,9 @@ class D3D11Frame:
             raise ValueError("D3D11Frame requires a non-null texture pointer.")
         if width <= 0 or height <= 0:
             raise ValueError("D3D11Frame dimensions must be positive.")
-        if dxgi_format != _DXGI_FORMAT_B8G8R8A8_UNORM:
+        if dxgi_format not in (_DXGI_FORMAT_B8G8R8A8_UNORM, 28):
             raise ValueError(
-                "D3D11Frame currently requires DXGI_FORMAT_B8G8R8A8_UNORM (87); "
+                "D3D11Frame requires SDR BGRA8 (87) or RGBA8 (28); "
                 f"received {dxgi_format}."
             )
         if sequence < 0:
@@ -189,7 +189,7 @@ class D3D11Frame:
 
     @property
     def format_name(self) -> str:
-        return "DXGI_FORMAT_B8G8R8A8_UNORM"
+        return "DXGI_FORMAT_B8G8R8A8_UNORM" if self.dxgi_format == 87 else "DXGI_FORMAT_R8G8B8A8_UNORM"
 
     def close(self) -> None:
         if self._closed:
@@ -635,7 +635,11 @@ class _NativeWGCRuntime:
         sequence: int,
         captured_at: float,
     ) -> D3D11Frame:
-        """Return an owned texture reference without CPU readback."""
+        """Snapshot the pool surface on the GPU before releasing the WGC frame.
+
+        AddRef alone does not prevent the capture pool from recycling its pixels.
+        Interpolation retains endpoints across acquisitions, so it needs a copy.
+        """
 
         surface = ctypes.c_void_p()
         access = ctypes.c_void_p()
@@ -675,6 +679,31 @@ class _NativeWGCRuntime:
                 )
             width = min(frame.width, int(desc.Width))
             height = min(frame.height, int(desc.Height))
+            from window_capture import window_client_crop_box
+            crop = window_client_crop_box(width, height, self.hwnd)
+            x, y = 0, 0
+            if crop is not None:
+                x, y, width, height = crop
+            owned = ctypes.c_void_p()
+            desc.Width, desc.Height = width, height
+            desc.Usage, desc.BindFlags, desc.CPUAccessFlags, desc.MiscFlags = 0, 8, 0, 0
+            result = _vtable_function(
+                self._device, 5, ctypes.c_long, ctypes.POINTER(_D3D11Texture2DDesc),
+                ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+            )(self._device, ctypes.byref(desc), None, ctypes.byref(owned))
+            _check_hresult(result, "CreateTexture2D(owned WGC snapshot)")
+            try:
+                box = (wintypes.UINT * 6)(x, y, 0, x+width, y+height, 1)
+                _vtable_function(
+                    self._context, 46, None, ctypes.c_void_p, wintypes.UINT,
+                    wintypes.UINT, wintypes.UINT, wintypes.UINT,
+                    ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p,
+                )(self._context, owned, 0, 0, 0, 0, texture, 0, ctypes.byref(box))
+            except Exception:
+                _release(owned)
+                raise
+            _release(texture)
+            texture = owned
             output = D3D11Frame(
                 texture,
                 width=width,
@@ -683,7 +712,7 @@ class _NativeWGCRuntime:
                 sequence=sequence,
                 captured_at=captured_at,
             )
-            # D3D11Frame now owns the GetInterface reference.
+            # D3D11Frame now owns the independent GPU snapshot.
             texture = ctypes.c_void_p()
             return output
         finally:
@@ -794,7 +823,11 @@ class WGCCaptureBackend(CaptureBackend):
         self._gpu_sequence = 0
         self._gpu_replaced_frames = 0
         self._closed = False
+        self.reuse_idle_frames = False
+        self._idle_frame = None
+        self._idle_logged = False
         width, height = self._runtime.size
+        self._surface_size = (width, height)
         self.capture_region = CaptureRegion(left=0, top=0, width=width, height=height)
         logger.info("WGC initialized for HWND %s at %sx%s", self.hwnd, width, height)
 
@@ -830,15 +863,17 @@ class WGCCaptureBackend(CaptureBackend):
             try:
                 if frame.width <= 0 or frame.height <= 0:
                     raise WGCWindowClosedError("WGC capture item returned zero-size content.")
-                current_size = (self.capture_region.width, self.capture_region.height)
+                current_size = self._surface_size
                 frame_size = (frame.width, frame.height)
                 if frame_size != current_size:
+                    self._idle_frame = None
                     logger.info(
                         "WGC content resized from %sx%s to %sx%s; recreating frame pool",
                         *current_size,
                         *frame_size,
                     )
                     self._runtime.recreate(*frame_size)
+                    self._surface_size = frame_size
                     self.capture_region = CaptureRegion(
                         left=0, top=0, width=frame.width, height=frame.height
                     )
@@ -855,8 +890,17 @@ class WGCCaptureBackend(CaptureBackend):
             self.capture_region = CaptureRegion(
                 left=0, top=0, width=output.shape[1], height=output.shape[0]
             )
+            if self.reuse_idle_frames:
+                self._idle_frame = output.copy()
+                self._idle_logged = False
             return output
 
+        if (self.reuse_idle_frames and self._idle_frame is not None
+                and win32gui.IsWindow(self.hwnd) and not win32gui.IsIconic(self.hwnd)):
+            if not self._idle_logged:
+                logger.info("WGC idle: retaining last image, no new source frame; capture remains open.")
+                self._idle_logged = True
+            return self._idle_frame.copy()
         raise WGCFrameNotReadyError(
             f"WGC did not deliver {'the first ' if not self._first_frame_received else 'a '}frame "
             f"within {timeout:.1f} seconds. The window may be closed, minimized, or not updating."
@@ -899,7 +943,7 @@ class WGCCaptureBackend(CaptureBackend):
             try:
                 if frame.width <= 0 or frame.height <= 0:
                     raise WGCWindowClosedError("WGC capture item returned zero-size content.")
-                current_size = (self.capture_region.width, self.capture_region.height)
+                current_size = self._surface_size
                 frame_size = (frame.width, frame.height)
                 if frame_size != current_size:
                     logger.info(
@@ -908,6 +952,7 @@ class WGCCaptureBackend(CaptureBackend):
                         *frame_size,
                     )
                     self._runtime.recreate(*frame_size)
+                    self._surface_size = frame_size
                     self.capture_region = CaptureRegion(
                         left=0, top=0, width=frame.width, height=frame.height
                     )
@@ -961,4 +1006,5 @@ class WGCCaptureBackend(CaptureBackend):
         self._check_owner()
         self._closed = True
         self._runtime.close()
+        self._idle_frame = None
         logger.info("WGC capture closed for HWND %s", self.hwnd)

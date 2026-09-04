@@ -244,7 +244,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--pipeline",
-        choices=("cpu", "d3d11"),
+        choices=("cpu", "d3d11", "d3d11_experimental"),
         default="cpu",
         help=(
             "Select the backward-compatible NumPy/OpenCV path or the explicit "
@@ -647,6 +647,7 @@ def _create_runtime_processor(
     ai_tile: str | int = "auto",
     ai_tile_size: int | None = None,
     ai_tile_overlap: int = DEFAULT_AI_TILE_OVERLAP,
+    ai_reuse_static_tiles: bool = False,
 ):
     """Create the selected frame processor without coupling it to rendering."""
 
@@ -672,6 +673,7 @@ def _create_runtime_processor(
             tile=ai_tile,
             tile_size=ai_tile_size,
             tile_overlap=ai_tile_overlap,
+            reuse_static_tiles=ai_reuse_static_tiles,
         )
         processor.initialize()
         return processor
@@ -845,7 +847,19 @@ def run_application(
     capture_region = app_config.capture_region
     window_title = None
 
-    if getattr(args, "window_title", None) or getattr(args, "window_hwnd", None) is not None:
+    if runtime_profile.capture_backend == "obs":
+        if getattr(args, "pipeline", "cpu") not in ("d3d11", "d3d11_experimental"):
+            logger.error("OBS Spout requires --pipeline d3d11 and an OBS output named URFTS.")
+            return
+        logger.info("OBS capture: game selection is controlled by OBS Game Capture, not the target-window field.")
+        if getattr(args, "window_title", None) or getattr(args, "window_hwnd", 0):
+            try:
+                selected_window = select_window(title=getattr(args, "window_title", None),
+                                                hwnd=getattr(args, "window_hwnd", None))
+                logger.info("OBS preview focus target: %s (capture source still controlled by OBS)", selected_window.title)
+            except WindowCaptureError:
+                logger.warning("OBS focus target is unavailable; use Ctrl+Alt+Q or GUI Stop to close the preview.")
+    elif getattr(args, "window_title", None) or getattr(args, "window_hwnd", None) is not None:
         try:
             selected_window = select_window(
                 title=getattr(args, "window_title", None),
@@ -866,12 +880,25 @@ def run_application(
         logger.error("AI processing requires an ONNX model; use --model PATH.")
         return
 
-    if getattr(args, "pipeline", "cpu") == "d3d11":
+    if getattr(args, "pipeline", "cpu") in ("d3d11", "d3d11_experimental"):
         gpu_frame_generation = getattr(args, "frame_generation", "off") != "off"
-        gpu_capability = probe_gpu_resident_backend()
+        experimental_gpu = args.pipeline == "d3d11_experimental"
+        gpu_capability = probe_gpu_resident_backend(allow_experimental=experimental_gpu)
+        if float(getattr(args, "presentation_buffer_ms", 0) or 0) != 0:
+            logger.error("GPU pipeline does not support presentation delay; set it to 0 ms.")
+            return
+        if gpu_frame_generation and (getattr(args, "generated_frames", 1) != 1 or
+                                     not getattr(args, "temporal_stabilization", True) or
+                                     not getattr(args, "ui_stabilization", True)):
+            logger.error("Native GPU frame generation requires one generated frame and temporal/HUD stabilization enabled.")
+            return
         if gpu_frame_generation and not gpu_capability.available:
             logger.error("GPU-resident frame generation is unavailable: %s", gpu_capability.reason)
             return
+        if experimental_gpu:
+            logger.warning("EXPERIMENTAL GPU: synthetic validation only; no stable-60 or moving-scene quality guarantee. Capture and inference share one GPU; numeric DirectML device choice is not used.")
+        if getattr(args, "draw_preview_overlay", False):
+            logger.warning("GPU FPS is logged to session output; the CPU preview FPS overlay is not available in the native presenter.")
         if processor_name == "ai":
             logger.error(
                 "AI processing uses the CPU frame pipeline; --pipeline d3d11 remains the unchanged shader pipeline."
@@ -904,17 +931,17 @@ def run_application(
             if gpu_frame_generation:
                 frame_generator_factory = lambda device: NativeDirectMLTextureInterpolator(
                     model_path=getattr(args, "rife_model", None) or DEFAULT_RIFE_MODEL_PATH,
-                    device_id=(
-                        getattr(args, "rife_device_id", None)
-                        if getattr(args, "rife_device_id", None) not in (None, -1)
-                        else getattr(args, "ai_device_id", 0)
-                    ),
+                    # This path shares one adapter with capture and presentation.
+                    # Numeric DirectML selection remains available in CPU mode.
+                    device_id=-1,
+                    allow_experimental=experimental_gpu,
                     d3d11_device_pointer=device,
                     inference_width=getattr(args, "rife_input_width", None) or 320,
                     inference_height=getattr(args, "rife_input_height", None) or 180,
                 )
             gpu_pipeline = D3D11GpuPipeline(
-                hwnd=selected_window.hwnd,
+                hwnd=selected_window.hwnd if selected_window else 0,
+                capture_backend=("wgc" if runtime_profile.capture_backend == "auto" else runtime_profile.capture_backend),
                 output_width=app_config.output_width,
                 output_height=app_config.output_height,
                 method=runtime_profile.upscaling_method,
@@ -925,7 +952,7 @@ def run_application(
                 frame_generator_factory=frame_generator_factory,
             )
             try:
-                return gpu_pipeline.run()
+                return gpu_pipeline.run(stop_requested=shutdown_event.is_set)
             finally:
                 gpu_pipeline.close()
 
@@ -956,6 +983,9 @@ def run_application(
 
     def create_capture_manager():
         return CaptureManager(
+            reuse_idle_frames=(getattr(args, "ai_reuse_static_tiles", False)
+                               and getattr(args, "processor", "shader") == "ai"
+                               and getattr(args, "frame_generation", "off") == "off"),
             backend=runtime_profile.capture_backend,
             capture_region=capture_region,
             window_hwnd=selected_window.hwnd if selected_window is not None else None,
@@ -1064,6 +1094,7 @@ def run_application(
         ai_input_width=getattr(args, "ai_input_width", None),
         ai_input_height=getattr(args, "ai_input_height", None),
         ai_tile=getattr(args, "ai_tile", "auto"),
+        ai_reuse_static_tiles=getattr(args, "ai_reuse_static_tiles", False),
         ai_tile_size=getattr(args, "ai_tile_size", None),
         ai_tile_overlap=getattr(
             args,

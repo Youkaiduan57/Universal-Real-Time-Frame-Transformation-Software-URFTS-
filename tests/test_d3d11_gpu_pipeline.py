@@ -25,7 +25,8 @@ from d3d11_gpu_pipeline import (
 from wgc_capture import D3D11Frame, WGCCaptureBackend, _NativeFrame
 
 
-def test_gpu_frame_metadata_and_close_owns_one_texture_reference(monkeypatch) -> None:
+@pytest.mark.parametrize("format_", [87, 28])
+def test_gpu_frame_metadata_and_close_owns_one_texture_reference(monkeypatch, format_) -> None:
     released: list[int] = []
 
     def fake_release(pointer):
@@ -38,14 +39,14 @@ def test_gpu_frame_metadata_and_close_owns_one_texture_reference(monkeypatch) ->
         ctypes.c_void_p(1234),
         width=1280,
         height=720,
-        dxgi_format=87,
+        dxgi_format=format_,
         sequence=9,
         captured_at=12.5,
     )
 
     assert frame.texture_pointer.value == 1234
     assert (frame.width, frame.height) == (1280, 720)
-    assert frame.format_name == "DXGI_FORMAT_B8G8R8A8_UNORM"
+    assert frame.format_name == ("DXGI_FORMAT_B8G8R8A8_UNORM" if format_ == 87 else "DXGI_FORMAT_R8G8B8A8_UNORM")
     assert frame.sequence == 9
     assert frame.captured_at == 12.5
 
@@ -63,7 +64,7 @@ def test_gpu_frame_metadata_and_close_owns_one_texture_reference(monkeypatch) ->
         (0, 1, 1, 87, "non-null"),
         (1, 0, 1, 87, "positive"),
         (1, 1, -1, 87, "positive"),
-        (1, 1, 1, 28, "B8G8R8A8"),
+        (1, 1, 1, 10, "SDR"),
     ],
 )
 def test_gpu_frame_metadata_validation(pointer, width, height, dxgi_format, message) -> None:
@@ -78,7 +79,7 @@ def test_gpu_frame_metadata_validation(pointer, width, height, dxgi_format, mess
         )
 
 
-@pytest.mark.parametrize("method", ("nearest", "bilinear", "lanczos", "fsr1_like"))
+@pytest.mark.parametrize("method", ("nearest", "bilinear", "bicubic", "lanczos", "fsr1_like"))
 def test_gpu_scaler_capabilities_accept_registered_methods(method: str) -> None:
     assert method in SUPPORTED_D3D11_SCALERS
     validate_gpu_pipeline_request(
@@ -90,7 +91,7 @@ def test_gpu_scaler_capabilities_accept_registered_methods(method: str) -> None:
     )
 
 
-@pytest.mark.parametrize("method", ("bicubic", "ai", "frame_generation"))
+@pytest.mark.parametrize("method", ("ai", "frame_generation"))
 def test_gpu_scaler_rejects_unimplemented_methods_without_substitution(method: str) -> None:
     with pytest.raises(D3D11CapabilityError, match=method):
         validate_gpu_pipeline_request(
@@ -514,3 +515,36 @@ def test_scaling_pass_releases_shader_resources_once(monkeypatch) -> None:
     scaling_pass.close()
 
     assert events == [101, 202, 303, 404, "program", 505]
+
+
+def test_gpu_loop_honors_gui_stop_before_acquiring():
+    pipeline = object.__new__(d3d11_gpu_pipeline.D3D11GpuPipeline)
+    pipeline._closed = False
+    pipeline.capture = SimpleNamespace(gpu_replaced_frames=0)
+    pipeline.scaling_pass = object()
+    pipeline.presenter = SimpleNamespace(quit_requested=False)
+    pipeline.adapter_description = "test adapter"
+    report = pipeline.run(stop_requested=lambda: True)
+    assert report.presented_frames == 0
+
+
+def test_cropped_gpu_frames_do_not_recreate_unchanged_wgc_surface(valid_window):
+    runtime = _FakeGpuRuntime(size=(1282,759))
+    runtime.frame_to_gpu = lambda frame, **metadata: SimpleNamespace(width=1280,height=720,**metadata)
+    backend = WGCCaptureBackend(7,runtime=runtime)
+    for _ in range(3):
+        runtime.frames.append(_NativeFrame(pointer=None,width=1282,height=759))
+        result = backend.grab_gpu_frame()
+        assert (result.width,result.height)==(1280,720)
+    assert runtime.recreated == []
+    # A real surface resize must still recreate exactly once.
+    runtime.frames.append(_NativeFrame(pointer=None,width=1402,height=839))
+    backend.grab_gpu_frame()
+    assert runtime.recreated == [(1402,839)]
+    backend.close()
+
+
+def test_gpu_window_does_not_activate_or_intercept_mouse():
+    presenter = object.__new__(d3d11_gpu_pipeline.D3D11SwapChainPresenter)
+    assert presenter._window_proc(1,0x0021,0,0)==3
+    assert presenter._window_proc(1,0x0084,0,0)==-1

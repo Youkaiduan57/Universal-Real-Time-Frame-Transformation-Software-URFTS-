@@ -62,13 +62,54 @@ def test_large_resizable_window_and_responsive_workspace(qt_app, tmp_path: Path)
     assert window.minimumHeight() == 650
     assert window.width() >= 1050
     assert window.height() >= 650
-    window._apply_responsive_layout(900)
+    window._apply_responsive_layout(1400)
     assert window.workspace_column_count == 2
     window._apply_responsive_layout(700)
     assert window.workspace_column_count == 1
-    window._apply_responsive_layout(900)
+    window._apply_responsive_layout(1400)
     assert window.workspace_column_count == 2
     window.close()
+
+
+def test_ai_test_profile_preserves_default_and_device(qt_app, tmp_path):
+    window = make_window(qt_app, tmp_path)
+    window.device_id.setValue(1)
+    window._save_settings()
+    original = dict(window.settings.profile_settings["Default"])
+    window.ai_test_profile_button.click()
+    args = window._configuration().to_engine_args()
+    assert window.settings.selected_profile == "AI Quality Test"
+    assert window.settings.profile_settings["Default"] == original
+    assert args.processor == "ai" and args.frame_generation == "off"
+    assert args.ai_input_width is None and args.ai_reuse_static_tiles
+    assert args.ai_device_id == 1 and args.output_refinement == 0
+    window.ai_reuse_static_tiles.setChecked(False)
+    window.ai_test_profile_button.click()
+    assert not window.ai_reuse_static_tiles.isChecked()
+    assert window.settings.profiles.count("AI Quality Test") == 1
+    window.close()
+    assert "AI Quality Test" in SettingsStore(tmp_path / "gui.json").load().profiles
+
+
+def test_quicksr_profile_selects_and_restores_builtin_model(qt_app, tmp_path):
+    from ui.controller import QUICKSR_MODEL
+    window = make_window(qt_app, tmp_path)
+    window._save_settings()
+    baseline = dict(window.settings.profile_settings["Default"])
+    window.quicksr_profile_button.click()
+    assert window.settings.selected_profile == "QuickSRNet Test"
+    args = window._configuration().to_engine_args()
+    assert args.model == QUICKSR_MODEL
+    assert args.ai_input_width is None and args.ai_tile == "off"
+    assert not args.ai_reuse_static_tiles and args.frame_generation == "off"
+    assert window.settings.profile_settings["Default"] == baseline
+    window._select_profile("Default")
+    window._select_profile("QuickSRNet Test")
+    assert window.model_combo.currentData() == str(QUICKSR_MODEL)
+    assert not window.browse_model_button.isVisible()
+    window.close()
+    restored = SettingsStore(tmp_path / "gui.json").load()
+    assert restored.ai_model_path == str(QUICKSR_MODEL)
 
 
 def test_light_theme_is_default(qt_app, tmp_path: Path) -> None:
@@ -307,9 +348,9 @@ def test_conditional_controls_and_preset_mapping(qt_app, tmp_path: Path) -> None
     assert window.ai_card.isVisible()
     assert window.ai_warning.isVisible()
     assert window.method_combo.currentData() == "srvgg"
+    previous_size = (window.ai_width.value(), window.ai_height.value())
     window.preset_combo.setCurrentIndex(window.preset_combo.findData("quality"))
-    assert window.ai_width.value() == PRESETS["quality"]["width"]
-    assert window.ai_height.value() == PRESETS["quality"]["height"]
+    assert (window.ai_width.value(), window.ai_height.value()) == previous_size
     assert window.max_latency.value() == PRESETS["quality"]["latency"]
     window.upscaling_control.set_value("shader")
     assert not window.ai_card.isVisible()
@@ -451,6 +492,72 @@ def test_frame_generation_device_can_be_split_from_ai_device(qt_app, tmp_path):
     assert restored.rife_device_id == 0
 
 
+def test_ai_cards_scroll_without_compressing_rows(qt_app, tmp_path: Path) -> None:
+    from ui.widgets import SettingsRow
+
+    window = make_window(qt_app, tmp_path)
+    window.toggle_theme()
+    for width, height in ((1920, 1000), (1050, 650)):
+        window.resize(width, height)
+        for mode in ("ai", "shader", "ai"):
+            window.upscaling_control.set_value(mode)
+            QTest.qWait(50)
+            qt_app.processEvents()
+            if mode != "ai":
+                continue
+            assert window.settings_scroll.verticalScrollBar().maximum() > 0
+            visible_cards = [card for card in window._workspace_cards if card.isVisible()]
+            for index, card in enumerate(visible_cards):
+                for other in visible_cards[index + 1:]:
+                    assert not card.geometry().intersects(other.geometry())
+            for card in (window.ai_card, window.rendering_card):
+                for row in card.findChildren(SettingsRow):
+                    if row.isVisible():
+                        assert row.height() >= row.minimumSizeHint().height()
+                        assert row.geometry().bottom() < card.height()
+            window.settings_scroll.ensureWidgetVisible(window.ai_input_policy_combo)
+            qt_app.processEvents()
+        window.grab().save(str(tmp_path / f"ai-layout-{width}.png"))
+    window.ai_reuse_static_tiles.setChecked(True)
+    assert window._configuration().to_engine_args().ai_reuse_static_tiles
+    window.close()
+    assert SettingsStore(tmp_path / "gui.json").load().ai_reuse_static_tiles
+
+
+def test_upscale_only_bypasses_frame_generation_without_losing_selection(qt_app, tmp_path):
+    window = make_window(qt_app, tmp_path)
+    window.frame_generation_control.set_value("rife")
+    window.workflow_combo.setCurrentIndex(window.workflow_combo.findData("upscale_only"))
+    assert not window.frame_card.isEnabled()
+    assert window._configuration().to_engine_args().frame_generation == "off"
+    assert window.frame_generation_control.value() == "rife"
+    window.workflow_combo.setCurrentIndex(window.workflow_combo.findData("combined"))
+    assert window.frame_card.isEnabled()
+    assert window._configuration().to_engine_args().frame_generation == "rife"
+    window.close()
+
+
+def test_native_upscale_input_is_independent_of_frame_generation_preset():
+    configuration = RuntimeConfiguration(hwnd=1,workflow="upscale_only",upscaling_mode="ai",
+        ai_input_policy="native",frame_generation="rife",rife_model_path=Path("missing.onnx"),
+        ai_input_width=160,ai_input_height=90,preset="performance")
+    args = configuration.to_engine_args()
+    assert args.frame_generation == "off"
+    assert args.rife_input_width is None
+    assert args.ai_input_width is None and args.ai_input_height is None
+
+
+def test_upscale_workflow_and_resolution_policy_persist(tmp_path):
+    store=SettingsStore(tmp_path/'settings.json')
+    store.save(GuiSettings(workflow="upscale_only",ai_input_policy="native"))
+    result=store.load()
+    assert (result.workflow,result.ai_input_policy)==("upscale_only","native")
+    store.path.write_text('{"ai_input_width":640,"ai_input_height":360}',encoding="utf-8")
+    result=store.load()
+    assert result.ai_input_policy=="custom"
+    assert result.workflow=="combined"
+
+
 def test_output_refinement_is_saved_and_reaches_runtime(qt_app,tmp_path):
     window=make_window(qt_app,tmp_path)
     window.output_refinement_combo.setCurrentIndex(window.output_refinement_combo.findData(.12))
@@ -491,6 +598,7 @@ def test_ifrnet_selection_persists_and_reaches_runtime(qt_app,tmp_path):
 
 def test_fast_quality_preset_uses_240_by_135_interpolation(qt_app, tmp_path: Path) -> None:
     window = make_window(qt_app, tmp_path)
+    previous_size = (window.ai_width.value(), window.ai_height.value())
     window.frame_generation_control.set_value("rife")
     index = window.preset_combo.findData("fast_quality")
     assert index >= 0
@@ -499,6 +607,5 @@ def test_fast_quality_preset_uses_240_by_135_interpolation(qt_app, tmp_path: Pat
     assert configuration.preset == "fast_quality"
     args = configuration.to_engine_args()
     assert (args.rife_input_width, args.rife_input_height) == (240, 135)
-    assert window.ai_width.value() == 240
-    assert window.ai_height.value() == 135
+    assert (window.ai_width.value(), window.ai_height.value()) == previous_size
     window.close()

@@ -11,6 +11,7 @@ from resource_paths import is_frozen, resource_path, user_data_dir
 SUPPORTED_CAPTURE_BACKENDS: Final[tuple[str, ...]] = (
 	"auto",
 	"wgc",
+	"obs",
 	"dxcam",
 	"mss",
 )

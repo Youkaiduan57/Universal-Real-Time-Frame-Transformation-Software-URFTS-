@@ -97,7 +97,7 @@ reacting to every isolated frame-time variation.
 - Confirmed working: WGC capture, CPU spatial upscaling, ONNX AI processing, RIFE interpolation, and the shader runtime tested with AssaultCube and Portal 2.
 - Supported CPU combinations: spatial or AI upscaling with optional RIFE 1x-4x generation.
 - D3D11 remains experimental. It requires a selected WGC window and `nearest`, `bilinear`, `lanczos`, or `fsr1_like` spatial processing.
-- The Python D3D11 host can now retain capture, interpolation, scaling, and presentation as D3D11 textures. Frame generation on this path requires an optional native `_urfts_directml` bridge implementing ABI version 1; without that module the GUI reports the capability as unavailable and continues to use the CPU-frame pipeline.
+- The D3D11 host supports WGC and experimental OBS/Spout GPU textures, including Bicubic scaling. Native frame generation is an explicit **D3D11 + GPU frame gen (experimental)** option and requires the compiled DirectML bridge. Missing capabilities produce an error rather than silently changing pipelines. See [GPU/OBS setup and validation limits](docs/GPU_OBS_EXPERIMENT.md); the existing CPU-frame baseline remains available.
 - Existing IFRNet-S and RIFE Lite files are classified as performance-tier models. A newly trained low-cost model can advertise `urfts.performance_tier=performance` and `urfts.gpu_resident_io=true` in its ONNX metadata.
 - D3D11 presentation requires an interactive Windows graphics session and cannot use `--no-preview`.
 - The bundled AI model is SRVGGNetCompact x2. Custom ONNX models must match the selected tensor layout, color order, and scale.

@@ -152,15 +152,24 @@ def crop_window_client(frame, hwnd):
 
     During resize/DPI transitions, retain the frame rather than guessing offsets.
     """
+    box = window_client_crop_box(frame.shape[1], frame.shape[0], hwnd)
+    if box is None:
+        return frame
+    x, y, width, height = box
+    return frame[y:y+height, x:x+width].copy()
+
+
+def window_client_crop_box(surface_width, surface_height, hwnd):
+    """Verified client rectangle shared by CPU cropping and GPU texture copies."""
     left, top, right, bottom = win32gui.GetClientRect(hwnd)
     width, height = right-left, bottom-top
-    if width <= 0 or height <= 0 or frame.shape[:2] == (height, width):
-        return frame
+    if width <= 0 or height <= 0 or (surface_height, surface_width) == (height, width):
+        return None
     bounds = _visible_frame_bounds(hwnd)
-    if frame.shape[:2] != (bounds[3]-bounds[1], bounds[2]-bounds[0]):
-        return frame
+    if (surface_height, surface_width) != (bounds[3]-bounds[1], bounds[2]-bounds[0]):
+        return None
     screen_x, screen_y = win32gui.ClientToScreen(hwnd, (left, top))
     x, y = screen_x-bounds[0], screen_y-bounds[1]
-    if x < 0 or y < 0 or x+width > frame.shape[1] or y+height > frame.shape[0]:
-        return frame
-    return frame[y:y+height, x:x+width].copy()
+    if x < 0 or y < 0 or x+width > surface_width or y+height > surface_height:
+        return None
+    return x, y, width, height

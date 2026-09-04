@@ -166,8 +166,17 @@ class AIProcessor:
         tile_size: int | None = None,
         tile_overlap: int = DEFAULT_AI_TILE_OVERLAP,
         session_factory: SessionFactory | None = None,
+        reuse_static_tiles: bool = False,
     ) -> None:
         self.model_path = model_path
+        self.reuse_static_tiles = reuse_static_tiles
+        self._tile_cache = {}
+        self._tile_cache_signature = None
+        self._cached_static_frame = None
+        self._cached_static_output = None
+        self._reuse_log_time = 0.0
+        self.tiles_reused = 0
+        self.last_compositing_ms = 0.0
         self.input_layout = _normalize_adapter_choice(
             input_layout,
             "input layout",
@@ -687,6 +696,25 @@ class AIProcessor:
         return weights
 
     def _process_tiled(self, frame: np.ndarray, tile_size: int) -> np.ndarray:
+        signature = (frame.shape, tile_size, self.tile_overlap)
+        if signature != self._tile_cache_signature:
+            self._tile_cache.clear()
+            self._tile_cache_signature = signature
+            self._cached_static_frame = None
+            self._cached_static_output = None
+        self.tiles_reused = 0
+        if (self.reuse_static_tiles and self._cached_static_frame is not None
+                and all(entry[2] < 120 for entry in self._tile_cache.values())
+                and np.array_equal(frame, self._cached_static_frame)):
+            self._tile_cache = {key: (source, output, age + 1)
+                                for key, (source, output, age) in self._tile_cache.items()}
+            self.tiles_reused = len(self._tile_cache)
+            self.tiles_processed = 0
+            self.last_inference_ms = 0.0
+            if time.perf_counter() - self._reuse_log_time >= 5.0:
+                logger.info("AI tile reuse: inferred 0, reused %d; unchanged frame", self.tiles_reused)
+                self._reuse_log_time = time.perf_counter()
+            return self._cached_static_output.copy()
         input_height, input_width = frame.shape[:2]
         x_starts = self._tile_starts(input_width, tile_size, self.tile_overlap)
         y_starts = self._tile_starts(input_height, tile_size, self.tile_overlap)
@@ -695,13 +723,28 @@ class AIProcessor:
         detected_tile_scale: int | None = None
         total_inference_ms = 0.0
         tile_count = 0
+        entries = []
+        dirty_regions = []
 
         for y_index, y_start in enumerate(y_starts):
             y_end = min(y_start + tile_size, input_height)
             for x_index, x_start in enumerate(x_starts):
                 x_end = min(x_start + tile_size, input_width)
                 tile = np.ascontiguousarray(frame[y_start:y_end, x_start:x_end])
-                tile_output, inference_ms = self._run_model_once(tile)
+                key = (y_start, x_start)
+                cached = self._tile_cache.get(key) if self.reuse_static_tiles else None
+                reused = False
+                # Compare every pixel, including overlap. No motion threshold:
+                # subtle text, colour changes and gradual movement must refresh.
+                if cached is not None and cached[2] < 120 and np.array_equal(tile, cached[0]):
+                    tile_output, inference_ms = cached[1], 0.0
+                    self._tile_cache[key] = (cached[0], cached[1], cached[2] + 1)
+                    self.tiles_reused += 1
+                    reused = True
+                else:
+                    tile_output, inference_ms = self._run_model_once(tile)
+                    if self.reuse_static_tiles:
+                        self._tile_cache[key] = (tile.copy(), tile_output.copy(), 0)
                 total_inference_ms += inference_ms
                 tile_count += 1
                 tile_scale = self._calculate_output_scale(
@@ -711,6 +754,9 @@ class AIProcessor:
                 )
                 if detected_tile_scale is None:
                     detected_tile_scale = tile_scale
+                elif tile_scale != detected_tile_scale:
+                    raise AIProcessorError("Tiled model output scale changed between tiles.")
+                if output_accumulator is None and not self.reuse_static_tiles:
                     output_accumulator = np.zeros(
                         (input_height * tile_scale, input_width * tile_scale, 3),
                         dtype=np.float32,
@@ -765,6 +811,12 @@ class AIProcessor:
                 output_y_start = y_start * scale
                 output_x_end = output_x_start + tile_output.shape[1]
                 output_y_end = output_y_start + tile_output.shape[0]
+                if self.reuse_static_tiles:
+                    region = (output_y_start, output_y_end, output_x_start, output_x_end)
+                    entries.append((region, tile_output, tile_weights))
+                    if not reused:
+                        dirty_regions.append(region)
+                    continue
                 if output_accumulator is None or weight_accumulator is None:
                     raise AIProcessorError("Tiled output accumulators were not initialized.")
                 output_accumulator[
@@ -776,6 +828,35 @@ class AIProcessor:
                     output_x_start:output_x_end,
                 ] += tile_weights
 
+        if self.reuse_static_tiles:
+            composite_start = time.perf_counter()
+            if self._cached_static_output is None:
+                self._cached_static_output = np.zeros(
+                    (input_height * detected_tile_scale, input_width * detected_tile_scale, 3), dtype=np.uint8)
+            # Rebuild only dirty output rectangles, including every neighbouring
+            # tile's overlap contribution. Re-summing avoids incremental drift.
+            for y0, y1, x0, x1 in dirty_regions:
+                sums = np.zeros((y1-y0, x1-x0, 3), dtype=np.float32)
+                weights = np.zeros((y1-y0, x1-x0), dtype=np.float32)
+                for (ty0, ty1, tx0, tx1), pixels, blend in entries:
+                    ay0, ay1 = max(y0, ty0), min(y1, ty1)
+                    ax0, ax1 = max(x0, tx0), min(x1, tx1)
+                    if ay0 >= ay1 or ax0 >= ax1:
+                        continue
+                    source = np.s_[ay0-ty0:ay1-ty0, ax0-tx0:ax1-tx0]
+                    target = np.s_[ay0-y0:ay1-y0, ax0-x0:ax1-x0]
+                    sums[target] += pixels[source].astype(np.float32) * blend[source][..., None]
+                    weights[target] += blend[source]
+                if np.any(weights <= 0):
+                    raise AIProcessorError("Cached tile composition left uncovered pixels.")
+                self._cached_static_output[y0:y1, x0:x1] = np.rint(
+                    np.clip(sums / weights[..., None], 0, 255)).astype(np.uint8)
+            self.last_compositing_ms = (time.perf_counter() - composite_start) * 1000
+            self._cached_static_frame = frame.copy()
+            self.last_inference_ms = total_inference_ms
+            self.tiles_processed = tile_count - self.tiles_reused
+            return self._cached_static_output.copy()
+
         if (
             output_accumulator is None
             or weight_accumulator is None
@@ -786,9 +867,16 @@ class AIProcessor:
             raise AIProcessorError("Tiled inference left uncovered output pixels.")
 
         self.last_inference_ms = total_inference_ms
-        self.tiles_processed = tile_count
+        self.tiles_processed = tile_count - self.tiles_reused
+        if self.reuse_static_tiles and time.perf_counter() - self._reuse_log_time >= 5.0:
+            logger.info("AI tile reuse: inferred %d, reused %d, tile %d px; exact pixel comparison", self.tiles_processed, self.tiles_reused, tile_size)
+            self._reuse_log_time = time.perf_counter()
         blended = output_accumulator / weight_accumulator[..., np.newaxis]
-        return np.rint(np.clip(blended, 0.0, 255.0)).astype(np.uint8)
+        result = np.rint(np.clip(blended, 0.0, 255.0)).astype(np.uint8)
+        if self.reuse_static_tiles:
+            self._cached_static_frame = frame.copy()
+            self._cached_static_output = result.copy()
+        return result
 
     def process(self, frame: np.ndarray) -> np.ndarray:
         """Preprocess, infer, and postprocess one OpenCV-style BGR frame."""
@@ -801,6 +889,7 @@ class AIProcessor:
             raise AIProcessorError("AIProcessor is not initialized.")
 
         processing_start = time.perf_counter()
+        self.last_compositing_ms = 0.0
         self.detected_scale = None
         self.output_width = None
         self.output_height = None
@@ -831,7 +920,11 @@ class AIProcessor:
         else:
             tile_size = None
 
-        if tile_size is not None and (
+        if self.reuse_static_tiles:
+            # Bound cache granularity even if Auto selects a full-frame tile.
+            tile_size = max(256, self.tile_overlap * 2 + 1) if tile_size is None else min(tile_size, max(256, self.tile_overlap * 2 + 1))
+            self.selected_tile_size = tile_size
+        if tile_size is not None and (self.reuse_static_tiles or
             input_width > tile_size or input_height > tile_size
         ):
             output = self._process_tiled(inference_frame, tile_size)
@@ -859,9 +952,17 @@ class AIProcessor:
             0.0,
             processing_ms - self.last_preprocessing_ms - inference_ms,
         )
+        if self.reuse_static_tiles and time.perf_counter() - self._reuse_log_time >= 5.0:
+            logger.info("AI cached stages: inferred %d, reused %d | inference %.2f ms | dirty composition %.2f ms | total %.2f ms",
+                        self.tiles_processed, self.tiles_reused, inference_ms, self.last_compositing_ms, processing_ms)
+            self._reuse_log_time = time.perf_counter()
         return output
 
     def shutdown(self) -> None:
+        self._tile_cache.clear()
+        self._tile_cache_signature = None
+        self._cached_static_frame = None
+        self._cached_static_output = None
         """Release the single loaded model session. Safe to call repeatedly."""
 
         self._validation_session_lease.release()

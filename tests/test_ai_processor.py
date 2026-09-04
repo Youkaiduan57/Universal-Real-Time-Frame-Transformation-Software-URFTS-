@@ -71,6 +71,56 @@ class _FakeSession:
         return [output]
 
 
+def test_static_tile_reuse_tracks_small_changes_overlap_and_resize(tmp_path):
+    model = tmp_path / "model.onnx"
+    model.touch()
+    processor = AIProcessor(model, tile=32, tile_overlap=4,
+        reuse_static_tiles=True, session_factory=_FakeSession)
+    processor.initialize()
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    assert np.array_equal(processor.process(frame), frame)
+    full_count = processor.tiles_processed
+    result = processor.process(frame)
+    assert processor.tiles_processed == 0
+    assert processor.tiles_reused == full_count
+    # Mutating the caller's frame cannot mutate cached inputs or outputs.
+    result[:] = 255
+    frame[29, 29] = 1  # Tiny change inside four overlapping tiles.
+    assert np.array_equal(processor.process(frame), frame)
+    assert 0 < processor.tiles_processed < full_count
+    frame[:] = 100  # Scene change: all tiles must refresh.
+    assert np.array_equal(processor.process(frame), frame)
+    assert processor.tiles_reused == 0
+    for key, (source, output, _) in processor._tile_cache.items():
+        processor._tile_cache[key] = (source, output, 120)
+    processor.process(frame)
+    assert processor.tiles_reused == 0
+    processor.process(np.zeros((40, 40, 3), dtype=np.uint8))
+    assert processor.tiles_reused == 0
+    processor.shutdown()
+    assert not processor._tile_cache
+
+
+def test_dirty_composition_matches_full_tiling_across_changes(tmp_path):
+    model = tmp_path / "model.onnx"
+    model.touch()
+    def session(*args, **kwargs):
+        result = _FakeSession(*args, **kwargs)
+        # Include tile-local context so overlap blending matters.
+        result.run = lambda names, feeds: [np.clip(feeds["input"] * 0.8 + feeds["input"].mean() * 0.2, 0, 1)]
+        return result
+    cached = AIProcessor(model, tile=32, tile_overlap=4, reuse_static_tiles=True, session_factory=session)
+    full = AIProcessor(model, tile=32, tile_overlap=4, session_factory=session)
+    cached.initialize()
+    full.initialize()
+    frame = np.random.default_rng(1).integers(0, 256, (64, 67, 3), dtype=np.uint8)
+    for index in range(12):
+        frame[28:31, 29:33] = index * 20
+        assert np.array_equal(cached.process(frame), full.process(frame))
+    cached.shutdown()
+    full.shutdown()
+
+
 def test_model_loading_prepares_rgb_nchw_and_uses_one_cpu_session(
     tmp_path: Path,
 ) -> None:
@@ -198,6 +248,7 @@ def test_backend_selection_initializes_configured_ai_processor(
             tile,
             tile_size,
             tile_overlap,
+            reuse_static_tiles,
         ):
             self.model_path = model_path
             self.input_layout = input_layout
@@ -211,6 +262,7 @@ def test_backend_selection_initializes_configured_ai_processor(
             self.tile = tile
             self.tile_size = tile_size
             self.tile_overlap = tile_overlap
+            self.reuse_static_tiles = reuse_static_tiles
 
         def initialize(self):
             initialized.append(self.model_path)
@@ -233,6 +285,7 @@ def test_backend_selection_initializes_configured_ai_processor(
         ai_input_height=180,
         ai_tile="192",
         ai_tile_overlap=12,
+        ai_reuse_static_tiles=True,
     )
 
     assert isinstance(processor, DummyAIProcessor)
@@ -247,6 +300,7 @@ def test_backend_selection_initializes_configured_ai_processor(
     assert processor.tile == "192"
     assert processor.tile_size is None
     assert processor.tile_overlap == 12
+    assert processor.reuse_static_tiles is True
     assert initialized == [model_path]
 
 

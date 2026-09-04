@@ -58,6 +58,22 @@ def _frame(width=4, height=3):
     return _NativeFrame(pointer=None, width=width, height=height)
 
 
+def test_idle_reuse_keeps_capture_open_and_resumes(monkeypatch):
+    runtime = _FakeRuntime([_frame()])
+    backend = WGCCaptureBackend(7, runtime=runtime, frame_timeout=0.001, poll_interval=0)
+    backend.reuse_idle_frames = True
+    image = backend.grab_frame()
+    image[:] = 0
+    assert backend.grab_frame()[0, 0].tolist() == [11, 22, 33]
+    assert not runtime.closed and not runtime.recreated
+    runtime.frames.extend([_frame(6, 5), _frame(6, 5)])
+    assert backend.grab_frame().shape == (5, 6, 3)
+    monkeypatch.setattr(wgc_capture.win32gui, "IsIconic", lambda hwnd: True)
+    with pytest.raises(WGCWindowClosedError):
+        backend.grab_frame()
+    backend.close()
+
+
 def test_wgc_identifier_is_supported() -> None:
     assert normalize_capture_backend("WGC") == "wgc"
 

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QFrame,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -74,6 +75,7 @@ class SettingsRow(QWidget):
         super().__init__(parent)
         self.setObjectName("settingsRow")
         layout = QHBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         layout.setContentsMargins(0, 5, 0, 5)
         layout.setSpacing(14)
 
@@ -101,6 +103,7 @@ class SettingsCard(QFrame):
         self.setObjectName("settingsCard")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.content_layout = QVBoxLayout(self)
+        self.content_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.content_layout.setContentsMargins(16, 14, 16, 14)
         self.content_layout.setSpacing(1)
         heading = QLabel(title)

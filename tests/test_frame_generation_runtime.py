@@ -77,3 +77,16 @@ def test_gpu_resident_probe_rejects_unvalidated_native_build():
     capability = probe_gpu_resident_backend(lambda _name: module)
     assert not capability.available
     assert "not validated" in capability.reason
+
+
+def test_experimental_probe_requires_explicit_opt_in_and_stabilization():
+    module = SimpleNamespace(ABI_VERSION=1, GPU_RESIDENT_IO=True,
+        PADDED_INPUT=True, STABILIZATION_GPU=True,
+        create_frame_generator=lambda: None, interpolate_d3d11=lambda: None,
+        close_frame_generator=lambda: None)
+    assert not probe_gpu_resident_backend(lambda _: module).available
+    capability = probe_gpu_resident_backend(lambda _: module, allow_experimental=True)
+    assert capability.available
+    assert "unvalidated" in capability.reason
+    module.STABILIZATION_GPU = False
+    assert not probe_gpu_resident_backend(lambda _: module, allow_experimental=True).available

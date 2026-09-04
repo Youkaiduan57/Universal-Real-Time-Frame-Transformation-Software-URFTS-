@@ -18,6 +18,7 @@ from resource_paths import resource_path
 
 PROJECT_ROOT = resource_path()
 SRVGG_MODEL = resource_path("models", "SRVGGNetCompact_x2.onnx")
+QUICKSR_MODEL = resource_path("models", "QuickSRNetSmall_x2.onnx")
 RIFE_MODEL = resource_path("models", "RIFE_v3.6.onnx")
 RIFE_LITE_MODEL = resource_path("models", "RIFE_v4.25_lite.onnx")
 IFRNET_MODEL = resource_path("models", "IFRNet_S_Vimeo90K.onnx")
@@ -34,6 +35,8 @@ PRESETS = {
 class RuntimeConfiguration:
     hwnd: int
     upscaling_mode: str = "shader"
+    workflow: str = "combined"
+    ai_input_policy: str = "custom"
     upscaling_method: str = "fsr1_like"
     frame_generation: str = "off"
     generated_frames: int = 1
@@ -45,6 +48,7 @@ class RuntimeConfiguration:
     device_id: int = 0
     rife_device_id: int | None = None
     ai_tile: str = "auto"
+    ai_reuse_static_tiles: bool = False
     ai_tile_overlap: int = 16
     ai_input_width: int = 320
     ai_input_height: int = 180
@@ -69,13 +73,19 @@ class RuntimeConfiguration:
     fsr1_like_edge_strength: float = 0.35
 
     def validate(self) -> None:
+        if self.workflow not in ("combined", "upscale_only"):
+            raise ValueError("Select a valid workflow.")
+        if self.ai_input_policy not in ("native", "custom"):
+            raise ValueError("Select Native source or Custom AI input.")
+        if self.workflow == "upscale_only" and self.upscaling_mode == "off":
+            raise ValueError("Enable Shader or AI upscaling in the Upscaling only workflow.")
         if not 0.0 <= self.output_refinement <= 0.25:
             raise ValueError("Output refinement must be between 0 and 0.25.")
         if not isinstance(self.temporal_stabilization, bool):
             raise ValueError("Temporal stabilization must be enabled or disabled.")
         if not isinstance(self.ui_stabilization, bool):
             raise ValueError("UI stabilization must be enabled or disabled.")
-        if self.hwnd <= 0:
+        if self.hwnd <= 0 and self.capture_backend != "obs":
             raise ValueError("Select an open target window.")
         if self.upscaling_mode not in ("off", "shader", "ai"):
             raise ValueError("Select a valid upscaling mode.")
@@ -101,9 +111,11 @@ class RuntimeConfiguration:
             raise ValueError("Select a valid provider and non-negative device ID.")
         if self.rife_device_id is not None and self.rife_device_id < -1:
             raise ValueError("Select Auto or a non-negative frame-generation device ID.")
-        if self.capture_backend not in ("auto", "wgc", "dxcam", "mss"):
+        if self.capture_backend not in ("auto", "wgc", "obs", "dxcam", "mss"):
             raise ValueError("Select a valid capture backend.")
-        if self.pipeline not in ("cpu", "d3d11"):
+        if self.capture_backend == "obs" and self.pipeline not in ("d3d11", "d3d11_experimental"):
+            raise ValueError("OBS Spout requires the D3D11 pipeline and an OBS sender named URFTS.")
+        if self.pipeline not in ("cpu", "d3d11", "d3d11_experimental"):
             raise ValueError("Select a valid runtime pipeline.")
         if self.ai_scale not in ("auto", "1", "2", "3", "4"):
             raise ValueError("Select a valid AI output scale.")
@@ -123,25 +135,30 @@ class RuntimeConfiguration:
                 raise ValueError(f"The selected AI model does not exist: {model_path}")
             if model_path.suffix.lower() != ".onnx":
                 raise ValueError("The selected AI model must be an ONNX file.")
-        if self.frame_generation == "rife" and not Path(self.rife_model_path).is_file():
+        if self.workflow != "upscale_only" and self.frame_generation == "rife" and not Path(self.rife_model_path).is_file():
             raise ValueError("The selected RIFE model is missing.")
-        if self.pipeline == "d3d11":
+        if self.pipeline in ("d3d11", "d3d11_experimental"):
             if self.upscaling_mode != "shader":
                 raise ValueError("The D3D11 pipeline requires Shader upscaling.")
-            if self.frame_generation != "off":
-                capability = probe_gpu_resident_backend()
+            if self.workflow != "upscale_only" and self.frame_generation != "off":
+                capability = probe_gpu_resident_backend(allow_experimental=self.pipeline == "d3d11_experimental")
                 if not capability.available:
                     raise ValueError(
                         "GPU-resident frame generation requires the native DirectML "
                         f"texture bridge. {capability.reason}"
                     )
-            if self.capture_backend not in ("auto", "wgc"):
-                raise ValueError("The D3D11 pipeline requires Auto or WGC capture.")
-            if self.upscaling_method == "bicubic":
-                raise ValueError("Bicubic is unavailable in the D3D11 pipeline.")
+                if self.generated_frames != 1 or self.provider != "directml":
+                    raise ValueError("Native GPU frame generation supports DirectML and one generated frame per real frame only.")
+                if not self.temporal_stabilization or not self.ui_stabilization:
+                    raise ValueError("The experimental GPU compositor currently requires temporal and HUD stabilization enabled.")
+            if self.presentation_buffer_ms != 0:
+                raise ValueError("Presentation delay is currently supported only by the CPU-frame pipeline.")
+            if self.capture_backend not in ("auto", "wgc", "obs"):
+                raise ValueError("The D3D11 pipeline requires Auto, WGC, or OBS capture.")
 
     def to_engine_args(self) -> SimpleNamespace:
         self.validate()
+        frame_generation = "off" if self.workflow == "upscale_only" else self.frame_generation
         method = self.upscaling_method if self.upscaling_mode == "shader" else "bilinear"
         if self.upscaling_mode == "off":
             method = "bilinear"
@@ -156,23 +173,24 @@ class RuntimeConfiguration:
             output_refinement=self.output_refinement,
             temporal_stabilization=self.temporal_stabilization,
             ui_stabilization=self.ui_stabilization,
-            queue_depth=self.queue_depth, frame_generation=self.frame_generation,
+            queue_depth=self.queue_depth, frame_generation=frame_generation,
             generated_frames=self.generated_frames, warmup_seconds=self.warmup_seconds,
             rife_model=Path(self.rife_model_path),
             rife_device_id=(
                 self.device_id if self.rife_device_id is None else self.rife_device_id
             ),
-            rife_input_width=(rife_preset["width"] if self.frame_generation == "rife" else None),
-            rife_input_height=(rife_preset["height"] if self.frame_generation == "rife" else None),
+            rife_input_width=(rife_preset["width"] if frame_generation == "rife" else None),
+            rife_input_height=(rife_preset["height"] if frame_generation == "rife" else None),
             pipeline=self.pipeline, processor="ai" if self.upscaling_mode == "ai" else "shader",
             model=Path(self.model_path) if self.upscaling_mode == "ai" else None,
             ai_input_layout=self.ai_input_layout, ai_output_layout=self.ai_output_layout,
             ai_color_order=self.ai_color_order,
             ai_provider=self.provider, ai_device_id=self.device_id,
             ai_scale=self.ai_scale if self.upscaling_mode == "ai" else "auto",
-            ai_input_width=self.ai_input_width if self.upscaling_mode == "ai" else None,
-            ai_input_height=self.ai_input_height if self.upscaling_mode == "ai" else None,
+            ai_input_width=self.ai_input_width if self.upscaling_mode == "ai" and self.ai_input_policy == "custom" else None,
+            ai_input_height=self.ai_input_height if self.upscaling_mode == "ai" and self.ai_input_policy == "custom" else None,
             ai_tile=self.ai_tile, ai_tile_size=None, ai_tile_overlap=self.ai_tile_overlap,
+            ai_reuse_static_tiles=self.ai_reuse_static_tiles,
             window_title=None, window_hwnd=self.hwnd, list_windows=False,
             capture_backend=self.capture_backend, upscaler_method=method,
             fsr1_like_sharpening=self.fsr1_like_sharpening,

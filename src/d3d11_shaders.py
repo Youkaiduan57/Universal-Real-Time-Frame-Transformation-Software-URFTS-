@@ -46,6 +46,29 @@ float4 PSMain(VertexOutput input) : SV_Target
     return sourceTexture.Sample(sourceSampler, input.texcoord);
 }
 
+// Keys cubic convolution with A=-0.75, matching OpenCV's cubic kernel.
+float CubicWeight(float value)
+{
+    float x = abs(value);
+    if (x <= 1.0) return (1.25*x - 2.25)*x*x + 1.0;
+    if (x < 2.0) return ((-0.75*x + 3.75)*x - 6.0)*x + 3.0;
+    return 0.0;
+}
+
+float4 PSBicubic(VertexOutput input) : SV_Target
+{
+    float2 p = input.position.xy * sourceSize / outputSize - 0.5;
+    int2 base = int2(floor(p));
+    float4 result = 0.0;
+    [unroll] for (int y=-1; y<=2; ++y) {
+        [unroll] for (int x=-1; x<=2; ++x) {
+            int2 q = clamp(base + int2(x,y), int2(0,0), int2(sourceSize)-1);
+            result += sourceTexture.Load(int3(q,0)) * CubicWeight(base.x+x-p.x) * CubicWeight(base.y+y-p.y);
+        }
+    }
+    return saturate(result);
+}
+
 float Sinc(float value)
 {
     float distance = abs(value);
@@ -178,6 +201,7 @@ float4 PSFsr1Like(VertexOutput input) : SV_Target
 _FULLSCREEN_SCALE_PIXEL_ENTRIES = {
     "nearest": b"PSMain",
     "bilinear": b"PSMain",
+    "bicubic": b"PSBicubic",
     "lanczos": b"PSLanczos",
     "fsr1_like": b"PSFsr1Like",
 }

@@ -22,12 +22,14 @@ class CaptureManager:
         capture_region: CaptureRegion | None = None,
         window_hwnd: int | None = None,
         fallback_on_explicit_failure: bool = False,
+        reuse_idle_frames: bool = False,
     ):
         self.requested_backend = normalize_capture_backend(backend)
         self.capture_region = capture_region or CaptureRegion()
         self.window_hwnd = window_hwnd
         self._window_client_region = capture_region if window_hwnd is not None else None
         self.fallback_on_explicit_failure = fallback_on_explicit_failure
+        self.reuse_idle_frames = reuse_idle_frames
         self.backend_name: str | None = None
         self._wgc_client_crop_logged = False
         self.backend = self._create_backend()
@@ -73,6 +75,7 @@ class CaptureManager:
         if not available:
             raise RuntimeError(reason)
         backend = WGCCaptureBackend(hwnd=self.window_hwnd)
+        backend.reuse_idle_frames = self.reuse_idle_frames
         try:
             backend.grab_frame()
         except Exception:

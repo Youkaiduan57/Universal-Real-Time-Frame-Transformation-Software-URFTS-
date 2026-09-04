@@ -61,6 +61,7 @@ class GpuResidentCapability:
 
 def probe_gpu_resident_backend(
     loader: Callable[[str], Any] = importlib.import_module,
+    *, allow_experimental: bool = False,
 ) -> GpuResidentCapability:
     """Probe the optional native D3D11/D3D12 DirectML texture bridge."""
 
@@ -86,6 +87,10 @@ def probe_gpu_resident_backend(
             detail = "GPU-resident I/O capability is disabled"
         return GpuResidentCapability(False, "unavailable", f"Incompatible native bridge: {detail}")
     if not bool(getattr(module, "RUNTIME_VALIDATED", False)):
+        if (allow_experimental and bool(getattr(module, "STABILIZATION_GPU", False))
+                and bool(getattr(module, "PADDED_INPUT", False))):
+            return GpuResidentCapability(True, "DirectML native texture bridge (experimental)",
+                                         "Synthetic tests only; gameplay quality and pacing are unvalidated.")
         return GpuResidentCapability(
             False, "unavailable",
             "Native bridge is built but not validated for live presentation; use the CPU-frame pipeline.",
@@ -105,8 +110,9 @@ class NativeDirectMLTextureInterpolator:
         inference_width: int,
         inference_height: int,
         loader: Callable[[str], Any] = importlib.import_module,
+        allow_experimental: bool = False,
     ) -> None:
-        capability = probe_gpu_resident_backend(loader)
+        capability = probe_gpu_resident_backend(loader, allow_experimental=allow_experimental)
         if not capability.available:
             raise RuntimeError(capability.reason)
         self._module = loader("_urfts_directml")

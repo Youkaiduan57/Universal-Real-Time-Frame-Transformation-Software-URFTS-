@@ -1,0 +1,23 @@
+{
+  "source": "https://github.com/quic/aimet-model-zoo/releases/download/phase_2_january_artifacts/quicksrnet_small_2x_checkpoint_float32.pth.tar",
+  "checkpoint_sha256": "d95d70f1d2366cb9c28d99f8c7aa5bb07e1ffeaf5d7e30d9c66ab0fa28c6d0f8",
+  "onnx_sha256": "a59153890e41e5109aae84513bde97a00f38a707a9791d917199eaaf57657f41",
+  "parameters": 22860,
+  "layout": "NCHW",
+  "color": "RGB",
+  "range": [
+    0,
+    1
+  ],
+  "scale": 2,
+  "ops": [
+    "Clip",
+    "Constant",
+    "Conv",
+    "DepthToSpace"
+  ],
+  "cpu_parity_max_errors": [
+    1.5497207641601562e-06,
+    1.430511474609375e-06
+  ]
+}

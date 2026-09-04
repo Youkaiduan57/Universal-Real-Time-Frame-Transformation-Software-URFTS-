@@ -16,6 +16,8 @@ class GuiSettings:
     selected_profile: str = "Default"
     profile_settings: dict[str, dict] = field(default_factory=dict)
     upscaling_mode: str = "shader"
+    workflow: str = "combined"
+    ai_input_policy: str = "native"
     upscaling_method: str = "fsr1_like"
     frame_generation: str = "off"
     generated_frames: int = 1
@@ -28,6 +30,7 @@ class GuiSettings:
     device_id: int = 0
     rife_device_id: int | None = None
     ai_tile: str = "auto"
+    ai_reuse_static_tiles: bool = False
     ai_tile_overlap: int = 16
     ai_input_width: int = 320
     ai_input_height: int = 180
@@ -76,6 +79,9 @@ class SettingsStore:
             for key, value in payload.items()
             if key in allowed
         }
+        # Existing profiles retain their explicit dimensions until changed.
+        if "ai_input_policy" not in values:
+            values["ai_input_policy"] = "custom"
 
         try:
             settings = GuiSettings(**values)

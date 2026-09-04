@@ -7,17 +7,22 @@ import win32gui
 logger = logging.getLogger(__name__)
 
 
+def configure_clickthrough(hwnd):
+    """Leave mouse hit testing and activation with the underlying application."""
+    style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+    win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE,
+                          style | win32con.WS_EX_LAYERED |
+                          win32con.WS_EX_TRANSPARENT | win32con.WS_EX_NOACTIVATE)
+    win32gui.SetLayeredWindowAttributes(hwnd, 0, 255, win32con.LWA_ALPHA)
+
+
 class GamePreview:
-    def __init__(self, title, target_hwnd):
+    def __init__(self, title, target_hwnd, *, hwnd=None):
         self.target = target_hwnd
-        self.hwnd = win32gui.FindWindow(None, title)
+        self.hwnd = hwnd if hwnd is not None else win32gui.FindWindow(None, title)
         if not self.hwnd:
             raise RuntimeError("Preview window was not created.")
-        style = win32gui.GetWindowLong(self.hwnd, win32con.GWL_EXSTYLE)
-        win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE,
-                              style | win32con.WS_EX_LAYERED |
-                              win32con.WS_EX_TRANSPARENT | win32con.WS_EX_NOACTIVATE)
-        win32gui.SetLayeredWindowAttributes(self.hwnd, 0, 255, win32con.LWA_ALPHA)
+        configure_clickthrough(self.hwnd)
         # The preview must never become its own capture source.
         self.visible = None
         try:
